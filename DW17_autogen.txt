@@ -1,0 +1,1544 @@
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.19
+-- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
+-- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
+-- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
+-- Module: CFG STATE WORLD MOVE ELEV GRAB COLLECT SKILL GEN FLOOR LOOP HOTKEY GUI BOOT
+
+-- ════════════════════════════════════════════════════════════════
+-- GUARD (single-instance — pattern _G.<PREFIX>_CONNS)
+-- ════════════════════════════════════════════════════════════════
+if _G.DW17_CONNS then
+    for _, c in pairs(_G.DW17_CONNS) do pcall(function() c:Disconnect() end) end
+end
+pcall(function() if _G.DW17_BV then _G.DW17_BV:Destroy() end end)
+_G.DW17_CONNS = {}
+_G.DW17_ON    = false   -- เริ่ม OFF — กดปุ่ม/[H] เพื่อเริ่ม
+_G.DW17_BV    = nil
+
+local LP   = game.Players.LocalPlayer
+local RS   = game:GetService("RunService")
+local UIS  = game:GetService("UserInputService")
+local VIM  = game:GetService("VirtualInputManager")
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: CFG
+-- ════════════════════════════════════════════════════════════════
+local CFG = {
+    LOOP_INTERVAL    = 0.08,  -- throttle logic ทุกกี่วิ
+    -- gen work — DW16 skillcheck = แกนหลักในการเติม | prompt แค่ "เริ่มสกัด"
+    GEN_STALL        = 1.5,   -- ถ้า CurrentAmount ไม่ขึ้นเกินนี้ (วิ) → fire prompt ซ้ำ (re-เริ่มสกัด)
+    GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
+    HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
+    MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
+    FLEE_COOLDOWN    = 1,     -- เครื่องที่มอนเคยใกล้ → บล็อกต่ออีกกี่วิ (ลด 3→2: กลับเครื่องเร็วขึ้น, พึ่ง NoDecode ดึงหนีถ้าถูกเห็นจริง)
+    -- ถูกมอนเห็น = InGamePlayers.<เรา>.NoDecode (BoolValue) โผล่ → บินหนีจนพ้นสายตา
+    SEEN_RISE        = 110,    -- บินขึ้นกี่ studs ตอนถูกเห็น (มองไม่เห็น)
+    SEEN_GRACE       = 1.5,   -- บินค้างต่ออีกกี่วิหลัง NoDecode หาย (กัน jitter)
+    SEEN_VERIFY_DIST = 12,    -- ถ้า hrp ห่าง seenCF เกินนี้ = วาปไม่ติด/ค้าง → ดับเบิลวาปซ้ำ
+    SEEN_RECHECK     = 0.5,     -- ยังถูกเห็นเกินกี่วิ → ยกสูงขึ้นอีก SEEN_RISE (สูงไม่พอ/มอนยังตาม)
+    -- skillcheck (จาก DW16 v1.7 — ยืนยันแล้ว)
+    SKILL_KEY        = Enum.KeyCode.Space,
+    CIRCLE_TRIGGER   = 0.90,  -- circle crossing (กดที่ ~0.88 = เยี่ยม!)
+    BAR_LEAD         = 4,     -- bar: กดก่อนถึงกึ่งกลาง GoldArea กี่ px
+    TREAD_INT        = 0.05,  -- treadmill tap interval
+    -- monster (จาก DW02)
+    -- IGNORE = ไม่บล็อกเครื่อง + ไม่หลบ "ตอนหลับ" (rodger/razzle/dazzle ตื่นแล้วหลบที่ DANGER)
+    IGNORE_NAMES     = { "blot", "connie", "rodger", "razzle", "dazzle" },
+    GRAB_NEAR        = 60,    -- react เมื่อมอนที่จะจับ ใกล้กว่านี้
+    GRAB_RISE        = 60,    -- บินทะลุขึ้นกี่ studs ตอนโดน/จะโดนจับ
+    GRAB_RISE_TIME   = 3,     -- บินค้างกี่วิ
+    -- DANGER: ตื่นเมื่อไหร่ต้องหลบ จนกว่าจะหลับ (Rodger=ลอย, Razzle&Dazzle=หลบแนวราบ)
+    AWAKE_RISE_NAMES = { "rodger" },            -- ตื่น → ลอยขึ้น DANGER_RISE
+    AWAKE_FLEE_NAMES = { "razzle", "dazzle" },  -- ตื่น → หลบแนวราบ (ลอยไม่รอด)
+    DANGER_RISE      = 50,    -- Rodger ตื่น → ลอยขึ้นกี่ studs
+    DANGER_DIST      = 60,    -- react Rodger ตื่น เมื่อใกล้กว่านี้
+    RAZZLE_SAFE_DIST = 30,    -- ห่าง Razzle&Dazzle อย่างน้อยกี่ studs
+    MOVE_THRESHOLD   = 1.5,   -- ขยับ ≥ นี้ต่อ sample = "ตื่น"
+    AWAKE_HOLD       = 2,     -- ถือว่ายัง "ตื่น" กี่วิหลังขยับล่าสุด
+    -- SPROUT: หนวด = Model "SproutTendril" ใน CurrentRoom.<Map>.FreeArea (ไม่ใช่ใน Monsters!)
+    -- เกิดตอน Sprout เห็นเรา → ไล่ตาม (RunSpeed 17) → หลบแนวราบ ไม่เข้าใกล้
+    SPROUT_TENDRIL_KW = { "sprouttendril", "tendril" },
+    SPROUT_SAFE_DIST  = 22,   -- ห่างหนวด Sprout อย่างน้อยกี่ studs (จูนได้)
+    -- elevator + collect (จาก DW02)
+    ELEV_WARP_Y      = 5,     -- วาปสูงเหนือ ElevatorPrompt (กันมุดพื้น)
+    ELEV_REWARP      = { 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 },  -- rewarp ตาม PanicTimer (กันหลุด)
+    DOUBLE_WARP_GAP  = 0.35,  -- ดับเบิลวาป: เว้นกี่วิระหว่างวาป 2 ครั้งหลังเก็บของ
+    ITEM_NAMES       = { "ResearchCapsule" },
+                        
+    -- เก็บตอนเข้าชั้นใหม่ (ก่อนทำเครื่อง) — item ช่วยทำเครื่อง/ฮีล ถ้ามีในห้อง
+    START_ITEM_NAMES = { "Instructions", "Extraction Speed Candy", "Jumper Cable",
+                         "Valve", "Jawbreaker", "Bottle o' Pop", "Box o' Chocolates",
+                         "Bandage", "Bandages", "Health Kit", "HealthKit", "Medkit", "MedKit" },
+    ITEM_MONSTER_DIST = 18,   -- มอนใกล้ item เกินนี้ → ไม่เก็บ (เก็บตอนเข้าชั้น)
+    ITEM_MONSTER_DIST_PANIC = 28,  -- ช่วงแพนนิค (เครื่องครบ) มอนดุ → เพิ่มระยะกันเก็บ
+    ITEM_UNDER       = 4,     -- วาปลงใต้ item กี่ studs
+    COLLECT_DELAY    = 0.5,  -- หน่วงก่อนกด E
+    -- HEAL: หัวใจลด → กดเลขช่อง hotbar ใช้ item (current = Humanoid.Health, max = MaxHealth)
+    --   ขาด 1 ดวง → Bandage | ขาด ≥2 → Med (ไม่มีก็ Bandage)
+    --   อ่านชื่อ item จาก workspace.InGamePlayers.<เรา>.Inventory.SlotN.Value (ground truth)
+    HEAL_ENABLE        = true,
+    HEAL_BANDAGE_NAMES = { "bandage" },
+    HEAL_MEDKIT_NAMES  = { "healthkit", "health kit", "medkit", "med kit" },
+    HEAL_BANDAGE_SLOT  = nil,  -- บังคับช่อง (ข้าม auto-detect) ถ้าตั้ง | nil = หาเองจาก Inventory
+    HEAL_MEDKIT_SLOT   = nil,
+    HEAL_COOLDOWN      = 3,     -- กดใช้ heal ห่างกันกี่วิ
+}
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: STATE
+-- ════════════════════════════════════════════════════════════════
+local STATE = {
+    lockedCFrame   = nil,
+    lastStatus     = "OFF — กดเริ่ม",
+    lastTick       = 0,
+    lastPrompt     = 0,
+    warpedToElev   = false,
+    lastMapRef     = nil,
+    lastFloor      = nil,
+    prevGenDone    = false,
+    collectedOnDone = false,
+    startCollectDone = false,   -- เก็บของตอนเข้าชั้นใหม่แล้วยัง (reset ทุกชั้น)
+    -- cache
+    cachedMonsters   = nil,
+    cachedGenerators = nil,
+    -- grab escape
+    grabRiseUntil  = nil,
+    grabWatchers   = {},
+    grabbers       = {},
+    -- skillcheck tuning state
+    circPrev       = {},
+    circLastRatio  = 0,
+    barPrev        = {},
+    -- gen work
+    curGenName     = "-",
+    skillHits      = 0,
+    workGenRef     = nil,     -- เครื่องที่กำลังทำอยู่ (ตรวจเปลี่ยนเครื่อง)
+    workSlot       = nil,     -- ช่องเครื่องคู่ที่เรากำลังทำ (1/2, nil=เดี่ยว)
+    workLastAmt    = 0,       -- CurrentAmount ครั้งล่าสุด
+    workLastChange = 0,       -- tick() ที่ amount ขึ้นล่าสุด (ตรวจค้าง)
+    workStarted    = false,   -- เริ่มสกัดเครื่องนี้แล้วยัง
+    holdKey        = nil,     -- KeyCode ที่กดค้างอยู่ (E สกัด) — nil = ไม่กด
+    genBlock       = {},      -- [gen] = expiry tick (มอนเคยใกล้ → บล็อก hysteresis)
+    -- danger (Rodger/Razzle ตื่น)
+    monMove        = {},      -- [monster] = {pos, moveAt}
+    lastMoveSample = 0,
+    dangerCF       = nil,     -- CFrame ลอยหนี Rodger (set ครั้งเดียวตอนเริ่มลอย)
+    seenUntil      = nil,     -- tick() ที่เลิกบินหนี (ถูกมอนเห็น NoDecode)
+    seenCF         = nil,     -- CFrame บินหนีตอนถูกเห็น
+    seenWarpAt     = nil,     -- tick() ที่ตั้ง/ยก seenCF ล่าสุด (ตรวจ recheck + ดับเบิลวาป)
+    lastHeal       = 0,       -- tick() ที่กดใช้ heal ล่าสุด (cooldown)
+}
+
+local function status(msg) STATE.lastStatus = msg end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: WORLD (จาก DW02 — dynamic lookup เพราะชื่อแมพเปลี่ยนทุกชั้น)
+-- ════════════════════════════════════════════════════════════════
+local WORLD = {}
+
+function WORLD.getMonsters()
+    if STATE.cachedMonsters and STATE.cachedMonsters.Parent then return STATE.cachedMonsters end
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local m = child:FindFirstChild("Monsters")
+            if m and m:IsA("Folder") then STATE.cachedMonsters = m return m end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Monsters" then STATE.cachedMonsters = obj return obj end
+    end
+    return nil
+end
+
+function WORLD.getGenerators()
+    if STATE.cachedGenerators and STATE.cachedGenerators.Parent then return STATE.cachedGenerators end
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local g = child:FindFirstChild("Generators")
+            if g and g:IsA("Folder") then STATE.cachedGenerators = g return g end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Generators" then STATE.cachedGenerators = obj return obj end
+    end
+    return nil
+end
+
+function WORLD.getMap()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if not cr then return nil end
+    for _, child in pairs(cr:GetChildren()) do
+        if child:FindFirstChild("Generators") or child:FindFirstChild("Monsters")
+           or child:FindFirstChild("Items") then return child end
+    end
+    return nil
+end
+
+function WORLD.getEntry()
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    return igp and igp:FindFirstChild(LP.Name)
+end
+
+function WORLD.allGeneratorsDone()
+    local ok, c  = pcall(function() return workspace.Info.GeneratorsCompleted.Value end)
+    local ok2, r = pcall(function() return workspace.Info.RequiredGenerators.Value end)
+    if ok and ok2 and r > 0 then return c >= r end
+    return false
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: MOVE (จาก DW02)
+-- ════════════════════════════════════════════════════════════════
+local MOVE = {}
+
+function MOVE.applyNoclip(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = true end
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = false end
+    end
+end
+
+function MOVE.removeFly()
+    STATE.lockedCFrame = nil
+    local char = LP.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = false end
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = true end
+    end
+end
+
+-- v4.18: pin ตัวไว้ที่ cf แบบ "แม่น" — set CFrame + zero velocity (linear+angular)
+--   root cause วาปไม่ติด: set CFrame เฉยๆ แต่ velocity ยังพุ่ง → เฟรมถัดไป physics ลากตัวไหล/ตก
+--   → server reconcile กลับที่เดิม → ตัวจริงยังอยู่ล่าง "บินหนีแล้วยังโดนตี"
+--   zero velocity = ตัวค้างนิ่งสนิท → server ไม่ดึงกลับ
+function MOVE.pin(hrp, cf)
+    if not hrp then
+        local char = LP.Character
+        hrp = char and char:FindFirstChild("HumanoidRootPart")
+    end
+    if not hrp then return end
+    hrp.CFrame = cf
+    pcall(function()
+        local z = Vector3.new(0, 0, 0)   -- ใช้ .new กัน executor/VM เก่าไม่รู้จัก Vector3.zero
+        hrp.AssemblyLinearVelocity  = z
+        hrp.AssemblyAngularVelocity = z
+    end)
+end
+
+function MOVE.lockAt(cf)
+    STATE.lockedCFrame = cf
+    MOVE.pin(nil, cf)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: ELEV (จาก DW02)
+-- ════════════════════════════════════════════════════════════════
+local ELEV = {}
+
+function ELEV.getCFrame()
+    local yOff = CFG.ELEV_WARP_Y
+    local ok, cf = pcall(function()
+        local ep = workspace.Info.ElevatorPrompt
+        return CFrame.new(ep.Position + Vector3.new(0, yOff, 0))
+    end)
+    if ok and cf then return cf end
+    local ok2, cf2 = pcall(function()
+        local ef = workspace:FindFirstChild("Elevators")
+        if not ef then return nil end
+        for _, p in pairs(ef:GetDescendants()) do
+            if p:IsA("BasePart") then return CFrame.new(p.Position + Vector3.new(0, yOff, 0)) end
+        end
+    end)
+    if ok2 and cf2 then return cf2 end
+    for _, p in pairs(workspace:GetDescendants()) do
+        local n = p.Name:lower()
+        if p:IsA("BasePart") and (n:find("elevator") or n:find("lift")) then
+            return CFrame.new(p.Position + Vector3.new(0, yOff, 0))
+        end
+    end
+    return nil
+end
+
+function ELEV.getCountdown()
+    local ok, v = pcall(function() return workspace.Info.PanicTimer.Value end)
+    if ok and type(v) == "number" and v > 0 then return v end
+    return nil
+end
+
+function ELEV.warp()
+    local cf = ELEV.getCFrame()
+    if cf then
+        local char = LP.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        MOVE.pin(hrp, cf)
+        MOVE.removeFly()
+        STATE.warpedToElev = true
+        STATE.lockedCFrame = nil
+        status("✅ วาปลิฟต์!")
+        warn("[DW17] วาปลิฟต์!")
+        return true
+    end
+    status("⚠️ หา Elevator ไม่เจอ")
+    return false
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: GRAB (จาก DW02 — บินทะลุหนีตอนโดน/จะโดนจับ)
+-- ════════════════════════════════════════════════════════════════
+local GRAB = {}
+
+function GRAB.escape()
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    STATE.grabRiseUntil = tick() + CFG.GRAB_RISE_TIME
+    MOVE.applyNoclip(char)   -- noclip ก่อน — ตอนโดนจับตัวถูก weld/anchor ต้องปลดก่อน set CFrame ถึงจะติด
+    MOVE.lockAt(CFrame.new(hrp.Position + Vector3.new(0, CFG.GRAB_RISE, 0)))
+    status("🆘 โดนจับ! บินทะลุขึ้น " .. CFG.GRAB_RISE)
+end
+
+function GRAB.hookGrabbed(val)
+    if not (val and val:IsA("BoolValue")) then return end
+    if val.Value then GRAB.escape() end
+    local c = val.Changed:Connect(function(v) if v then GRAB.escape() end end)
+    table.insert(STATE.grabWatchers, c)
+    table.insert(_G.DW17_CONNS, c)
+end
+
+function GRAB.watchGrabbers()
+    local mf = WORLD.getMonsters()
+    if not mf then return end
+    STATE.grabbers = {}
+    for _, m in pairs(mf:GetChildren()) do
+        local grabbing = m:FindFirstChild("Grabbing")
+        if grabbing and grabbing:IsA("BoolValue") then
+            local mName = m.Name
+            table.insert(STATE.grabbers, { m = m, val = grabbing })
+            local c = grabbing.Changed:Connect(function(v)
+                if not v then return end
+                local char = LP.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local mHRP = m:FindFirstChild("HumanoidRootPart")
+                if hrp and mHRP and (hrp.Position - mHRP.Position).Magnitude <= CFG.GRAB_NEAR then
+                    status("🦾 " .. mName .. " จะจับ! บินหนี")
+                    GRAB.escape()
+                end
+            end)
+            table.insert(STATE.grabWatchers, c)
+            table.insert(_G.DW17_CONNS, c)
+        end
+    end
+    local nc = mf.ChildAdded:Connect(function(child)
+        task.wait(0.3)
+        if child:FindFirstChild("Grabbing") then GRAB.watchGrabbers() end
+    end)
+    table.insert(STATE.grabWatchers, nc)
+    table.insert(_G.DW17_CONNS, nc)
+end
+
+function GRAB.pollGrabbers()
+    if #STATE.grabbers == 0 then return end
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    for _, g in pairs(STATE.grabbers) do
+        if g.val and g.val.Parent and g.val.Value and g.m.Parent then
+            local mHRP = g.m:FindFirstChild("HumanoidRootPart")
+            if mHRP and (hrp.Position - mHRP.Position).Magnitude <= CFG.GRAB_NEAR then
+                GRAB.escape() return
+            end
+        end
+    end
+end
+
+function GRAB.watch()
+    for _, c in pairs(STATE.grabWatchers) do pcall(function() c:Disconnect() end) end
+    STATE.grabWatchers = {}
+    GRAB.watchGrabbers()
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    if not igp then return end
+    local entry = igp:FindFirstChild(LP.Name)
+    if not entry then
+        local c = igp.ChildAdded:Connect(function(ch)
+            if ch.Name == LP.Name then task.wait(0.1) GRAB.watch() end
+        end)
+        table.insert(STATE.grabWatchers, c)
+        table.insert(_G.DW17_CONNS, c)
+        return
+    end
+    GRAB.hookGrabbed(entry:FindFirstChild("Grabbed"))
+    local c = entry.ChildAdded:Connect(function(ch)
+        if ch.Name == "Grabbed" then task.wait() GRAB.hookGrabbed(ch) end
+    end)
+    table.insert(STATE.grabWatchers, c)
+    table.insert(_G.DW17_CONNS, c)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: DANGER (Rodger/Razzle&Dazzle — IGNORE ตอนหลับ, หลบตอนตื่น)
+--   ตื่น = มี BoolValue awake/active.. = true | มี vine | ขยับล่าสุด ≤ AWAKE_HOLD วิ
+-- ════════════════════════════════════════════════════════════════
+local DANGER = {}
+
+function DANGER.wakeKind(name)
+    local n = name:lower()
+    for _, kw in pairs(CFG.AWAKE_RISE_NAMES) do if n:find(kw) then return "rise" end end
+    for _, kw in pairs(CFG.AWAKE_FLEE_NAMES) do if n:find(kw) then return "flee" end end
+    return nil
+end
+
+-- sample การขยับของมอน wake-sensitive (ทุก 0.3s)
+function DANGER.sample()
+    if tick() - STATE.lastMoveSample < 0.3 then return end
+    STATE.lastMoveSample = tick()
+    local mf = WORLD.getMonsters()
+    if not mf then return end
+    for _, m in pairs(mf:GetChildren()) do
+        if DANGER.wakeKind(m.Name) then
+            local mh = m:FindFirstChild("HumanoidRootPart")
+            if mh then
+                local rec = STATE.monMove[m]
+                if not rec then
+                    STATE.monMove[m] = { pos = mh.Position, moveAt = 0 }
+                else
+                    if (mh.Position - rec.pos).Magnitude >= CFG.MOVE_THRESHOLD then rec.moveAt = tick() end
+                    rec.pos = mh.Position
+                end
+            end
+        end
+    end
+end
+
+function DANGER.isAwake(m)
+    for _, obj in pairs(m:GetDescendants()) do
+        local n = obj.Name:lower()
+        if obj:IsA("BoolValue") and obj.Value and
+           (n=="awake" or n=="active" or n=="activated" or n=="alert" or n=="chasing" or n=="angry") then
+            return true
+        end
+        if n:find("vine") then return true end   -- Razzle active = RazzleVine โผล่
+    end
+    local rec = STATE.monMove[m]
+    if rec and tick() - rec.moveAt <= CFG.AWAKE_HOLD then return true end
+    return false
+end
+
+-- จัดการ Rodger/Razzle ตื่น → return true ถ้าหลบอยู่ (block gen work)
+function DANGER.handle(hrp, char)
+    DANGER.sample()
+    local mf = WORLD.getMonsters()
+    if not mf then STATE.dangerCF = nil return false end
+
+    local riseNear = false
+    local fleeMon, fleeHRP = nil, nil
+    for _, m in pairs(mf:GetChildren()) do
+        local kind = DANGER.wakeKind(m.Name)
+        if kind then
+            local mh = m:FindFirstChild("HumanoidRootPart")
+            if mh and DANGER.isAwake(m) then
+                local d = (hrp.Position - mh.Position).Magnitude
+                if kind == "rise" and d <= CFG.DANGER_DIST then
+                    riseNear = true
+                elseif kind == "flee" and d <= CFG.RAZZLE_SAFE_DIST then
+                    fleeMon, fleeHRP = m, mh
+                end
+            end
+        end
+    end
+
+    -- Razzle&Dazzle ใกล้ → หลบแนวราบ (ลอยไม่รอด)
+    if fleeHRP then
+        MOVE.applyNoclip(char)
+        local away = hrp.Position - fleeHRP.Position
+        away = Vector3.new(away.X, 0, away.Z)
+        if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+        away = away.Unit * CFG.RAZZLE_SAFE_DIST
+        local keepY = (STATE.lockedCFrame or hrp.CFrame).Position.Y
+        MOVE.lockAt(CFrame.new(Vector3.new(fleeHRP.Position.X + away.X, keepY, fleeHRP.Position.Z + away.Z)))
+        STATE.dangerCF = nil
+        status("💃 " .. fleeMon.Name .. " ตื่น! หลบแนวราบ")
+        return true
+    end
+
+    -- Rodger ตื่น → ลอยขึ้น (set CFrame ครั้งเดียว กันลอยทบ)
+    if riseNear then
+        MOVE.applyNoclip(char)
+        if not STATE.dangerCF then
+            STATE.dangerCF = CFrame.new(hrp.Position + Vector3.new(0, CFG.DANGER_RISE, 0))
+        end
+        STATE.lockedCFrame = STATE.dangerCF
+        MOVE.pin(hrp, STATE.dangerCF)
+        status("⬆️ Rodger ตื่น! ลอย " .. CFG.DANGER_RISE)
+        return true
+    end
+
+    STATE.dangerCF = nil   -- ไม่มีตัวตื่น → กลับไปทำเครื่อง
+    return false
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: SPROUT (หลบหนวด — Model "SproutTendril" ใน FreeArea, ไม่ใช่ Monsters)
+--   หนวดเกิดตอน Sprout เห็นเรา → ไล่ตาม → หลบแนวราบให้พ้น SPROUT_SAFE_DIST
+-- ════════════════════════════════════════════════════════════════
+local SPROUT = {}
+
+-- หา HRP ของหนวดทุกตัว — path เปลี่ยนได้ (Workspace.SproutTendril หรือ CurrentRoom.<Map>.FreeArea)
+function SPROUT.getTendrils()
+    local list = {}
+    local function addFrom(parent)
+        for _, ch in pairs(parent:GetChildren()) do
+            local n = ch.Name:lower()
+            for _, kw in pairs(CFG.SPROUT_TENDRIL_KW) do
+                if n:find(kw) then
+                    local part = ch:FindFirstChild("HumanoidRootPart") or ch:FindFirstChildWhichIsA("BasePart", true)
+                    if part then table.insert(list, part) end
+                    break
+                end
+            end
+        end
+    end
+    addFrom(workspace)   -- top-level: Workspace.SproutTendril
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, map in pairs(cr:GetChildren()) do
+            addFrom(map)                                  -- map children
+            local fa = map:FindFirstChild("FreeArea")
+            if fa then addFrom(fa) end                    -- CurrentRoom.<Map>.FreeArea
+        end
+    end
+    return list
+end
+
+-- มีหนวดใกล้ตำแหน่ง pos (เครื่อง) ไหม → ใช้กันไม่ให้เลือกเครื่องในเขตหนวด
+function SPROUT.nearMachine(pos)
+    if not pos then return false end
+    for _, t in pairs(SPROUT.getTendrils()) do
+        if (pos - t.Position).Magnitude <= CFG.SPROUT_SAFE_DIST then return true end
+    end
+    return false
+end
+
+-- return true ถ้ากำลังหลบหนวด (block gen work)
+function SPROUT.handle(hrp, char)
+    local tendrils = SPROUT.getTendrils()
+    if #tendrils == 0 then return false end
+    local nearest, nd = nil, math.huge
+    for _, t in pairs(tendrils) do
+        local d = (hrp.Position - t.Position).Magnitude
+        if d < nd then nd = d nearest = t end
+    end
+    if nearest and nd <= CFG.SPROUT_SAFE_DIST then
+        -- หลบแนวราบออกจากหนวด (คงความสูงเดิม — ถ้า NoDecode ยกขึ้นไว้ ก็ค้างสูง)
+        MOVE.applyNoclip(char)
+        local away = hrp.Position - nearest.Position
+        away = Vector3.new(away.X, 0, away.Z)
+        if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+        away = away.Unit * CFG.SPROUT_SAFE_DIST
+        local keepY = (STATE.lockedCFrame or hrp.CFrame).Position.Y
+        MOVE.lockAt(CFrame.new(Vector3.new(nearest.Position.X + away.X, keepY, nearest.Position.Z + away.Z)))
+        status("🌱 หนวด Sprout ใกล้ (" .. math.floor(nd) .. ")! หลบ")
+        return true
+    end
+    return false
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: COLLECT (จาก DW02 — เก็บ ResearchCapsule)
+-- ════════════════════════════════════════════════════════════════
+local COLLECT = {}
+
+function COLLECT.getItemsFolder()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local items = child:FindFirstChild("Items")
+            if items and items:IsA("Folder") then return items end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Items" then return obj end
+    end
+    return nil
+end
+
+function COLLECT.getAvailableItems(names)
+    names = names or CFG.ITEM_NAMES
+    local list, seen = {}, {}
+    local itemFolder = COLLECT.getItemsFolder()
+    if itemFolder then
+        for _, item in pairs(itemFolder:GetChildren()) do
+            if not seen[item] then
+                seen[item] = true
+                local allowed = #names == 0
+                if not allowed then
+                    for _, n in pairs(names) do if item.Name == n then allowed = true break end end
+                end
+                if allowed and item.Parent then
+                    local prompt
+                    local pf = item:FindFirstChild("Prompt")
+                    if pf then prompt = pf:FindFirstChildWhichIsA("ProximityPrompt") end
+                    if not prompt then prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true) end
+                    local part = item:FindFirstChildWhichIsA("BasePart", true)
+                    if prompt and part then table.insert(list, { item = item, prompt = prompt, part = part }) end
+                end
+            end
+        end
+    end
+    return list
+end
+
+function COLLECT.monsterNear(pos, dist)
+    dist = dist or CFG.ITEM_MONSTER_DIST
+    local mf = WORLD.getMonsters()
+    if not mf then return false end
+    for _, m in pairs(mf:GetChildren()) do
+        local mHRP = m:FindFirstChild("HumanoidRootPart")
+        local hum  = m:FindFirstChildOfClass("Humanoid")
+        if mHRP and hum and hum.Health > 0 then
+            if (pos - mHRP.Position).Magnitude <= dist then return true, m.Name end
+        end
+    end
+    return false
+end
+
+-- กำลังหนีมอน (ถูกเห็น/โดนจับ) → COLLECT ต้องหยุด ไม่งั้นแย่ง position กับระบบหนี
+local function COLLECT_fleeing()
+    return (STATE.seenUntil and tick() < STATE.seenUntil) or STATE.grabRiseUntil ~= nil
+end
+
+function COLLECT.run(onDone, names, monDist)
+    if STATE.collectBusy then if onDone then onDone() end return end
+    monDist = monDist or CFG.ITEM_MONSTER_DIST
+    STATE.collectBusy = true
+    STATE.collectStartAt = tick()
+    task.spawn(function()
+        local ok, err = pcall(function()
+            local char = LP.Character
+            local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            local total, pass = 0, 0
+            repeat
+                pass += 1
+                if STATE.warpedToElev then break end
+                local items = COLLECT.getAvailableItems(names)
+                if #items == 0 then break end
+                for _, e in pairs(items) do
+                    if STATE.warpedToElev then break end
+                    -- (ข้อ 2) ถูกเห็น/โดนจับ → หยุดเก็บ ให้ระบบหนีคุม position (กันแย่ง/สั่น)
+                    if COLLECT_fleeing() then
+                        status("⏸ หยุดเก็บ — กำลังหนีมอน")
+                        break   -- ออก for → pass ใหม่หลัง escape เคลียร์
+                    end
+                    if e.item.Parent and e.part.Parent then
+                        local near, mName = COLLECT.monsterNear(e.part.Position, monDist)
+                        if near then
+                            status("⚠️ ข้าม " .. e.item.Name .. " (" .. mName .. " ใกล้)")
+                        else
+                            MOVE.lockAt(CFrame.new(e.part.Position + Vector3.new(0, -CFG.ITEM_UNDER, 0)))
+                            task.wait(CFG.COLLECT_DELAY)
+                            -- (ข้อ 1) recheck หลัง delay: มอนเดินเข้ามา/เพิ่งโดนเห็น → ยกเลิก ไม่กด
+                            if COLLECT_fleeing() or COLLECT.monsterNear(e.part.Position, monDist) then
+                                status("⚠️ ยกเลิก " .. e.item.Name .. " (มอนเข้ามา/ถูกเห็น)")
+                            else
+                                pcall(function() fireproximityprompt(e.prompt) end)
+                                task.wait(0.25)
+                                total += 1
+                                status("🎒 (" .. total .. ") " .. e.item.Name)
+                            end
+                        end
+                    end
+                end
+                task.wait(0.1)
+            until pass >= 10
+            status(total > 0 and ("✅ เก็บ " .. total .. " ชิ้น") or "🎒 ไม่มี Item")
+        end)
+        if not ok then warn("[DW17] COLLECT error: " .. tostring(err)) end
+        STATE.collectBusy = false
+        if onDone then onDone() end
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: SKILL (port จาก DW16 v1.7 — auto-skillcheck กด Space)
+-- ════════════════════════════════════════════════════════════════
+local SKILL = {}
+local pg = LP:WaitForChild("PlayerGui")
+
+local function pressSkillKey()
+    pcall(function()
+        VIM:SendKeyEvent(true,  CFG.SKILL_KEY, false, game)
+        VIM:SendKeyEvent(false, CFG.SKILL_KEY, false, game)
+    end)
+    STATE.skillHits += 1
+end
+
+local function overlap(a, b)
+    if not (a and b) then return false end
+    local ap, as = a.AbsolutePosition, a.AbsoluteSize
+    local bp, bs = b.AbsolutePosition, b.AbsoluteSize
+    return ap.X < bp.X+bs.X and ap.X+as.X > bp.X
+       and ap.Y < bp.Y+bs.Y and ap.Y+as.Y > bp.Y
+end
+
+-- คืน: typ, marker, zone, frame
+function SKILL.find()
+    -- 1) Circle
+    local cgui = pg:FindFirstChild("CircleSkillCheckGui")
+    if cgui then
+        local container = cgui:FindFirstChild("Container", true)
+        local yellow = container and container:FindFirstChild("YellowCircle")
+        if container and yellow then return "circle", nil, yellow, container end
+    end
+    -- 2) Treadmill (tap)
+    local tread = pg:FindFirstChild("TreadmillTapSkillCheckGui")
+    if tread then
+        local f = tread:FindFirstChild("TapSkillCheckFrame", true)
+        if f and f.Visible then return "treadmill", nil, nil, f end
+    end
+    -- 3) default bar — ScreenGui.Menu.SkillCheckFrame
+    for _, g in pairs(pg:GetChildren()) do
+        local menu = g:FindFirstChild("Menu")
+        local f = menu and menu:FindFirstChild("SkillCheckFrame")
+        if f and f.Visible then return "default", nil, nil, f end
+    end
+    return nil
+end
+
+-- เรียกทุกเฟรม — กด Space ตอน skillcheck โผล่
+function SKILL.step()
+    local typ, _, zone, f = SKILL.find()
+    if not typ then return false end
+
+    if typ == "treadmill" then
+        if tick() - (STATE.lastTread or 0) >= CFG.TREAD_INT then
+            STATE.lastTread = tick() pressSkillKey()
+        end
+        return true
+    elseif typ == "circle" then
+        -- crossing: กดตอน ratio หล่นผ่าน CIRCLE_TRIGGER ลงมา (ส้มอยู่ที่ ratio < 1.0)
+        local zs = zone.AbsoluteSize.X
+        for _, c in pairs(f:GetChildren()) do
+            if c.Name == "ShrinkingCircle" and c:IsA("GuiObject") and c.Visible and zs > 0 then
+                local r = c.AbsoluteSize.X / zs
+                local prev = STATE.circPrev[c] or 999
+                if prev > CFG.CIRCLE_TRIGGER and r <= CFG.CIRCLE_TRIGGER and r >= 0.55 then
+                    pressSkillKey() STATE.circLastRatio = r
+                end
+                STATE.circPrev[c] = r
+            end
+        end
+        return true
+    else -- default bar — center crossing เล็งกึ่งกลาง GoldArea (ส้ม=great)
+        local markers, golds = {}, {}
+        for _, c in pairs(f:GetChildren()) do
+            if c:IsA("GuiObject") then
+                if c.Name == "Marker"       then table.insert(markers, c)
+                elseif c.Name == "GoldArea" then table.insert(golds, c) end
+            end
+        end
+        for _, m in pairs(markers) do
+            local mC   = m.AbsolutePosition.X + m.AbsoluteSize.X / 2
+            local prev = STATE.barPrev[m] or -9999
+            for _, g in pairs(golds) do
+                local gC   = g.AbsolutePosition.X + g.AbsoluteSize.X / 2
+                local line = gC - CFG.BAR_LEAD
+                if prev < line and mC >= line then pressSkillKey() end
+            end
+            STATE.barPrev[m] = mC
+        end
+        return true
+    end
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: GEN — หาเครื่อง + เลือกเป้า + ทำเครื่อง/ลอยรอ
+-- ════════════════════════════════════════════════════════════════
+local GEN = {}
+
+-- มอนอันตรายใกล้ตำแหน่ง pos ไหม (ระยะ "แนวราบ" ตัด Y — บินสูงก็ยังนับว่าใกล้)
+-- ข้าม IGNORE_NAMES = blot/connie/rodger/razzle/dazzle (ตอนหลับ)
+function GEN.monsterNear(pos)
+    local mf = WORLD.getMonsters()
+    if not mf then return false end
+    for _, m in pairs(mf:GetChildren()) do
+        local mHRP = m:FindFirstChild("HumanoidRootPart")
+        local hum  = m:FindFirstChildOfClass("Humanoid")
+        if mHRP and hum and hum.Health > 0 then
+            local n = m.Name:lower()
+            local ignored = false
+            for _, kw in pairs(CFG.IGNORE_NAMES) do if n:find(kw) then ignored = true break end end
+            if not ignored then
+                local d = mHRP.Position - pos
+                if math.sqrt(d.X*d.X + d.Z*d.Z) <= CFG.MON_NEAR_GEN then return true, m.Name end
+            end
+        end
+    end
+    return false
+end
+
+-- ตำแหน่งจริงของ ProximityPrompt (parent = Attachment/Part) — ใช้ยืนให้ตรงจุด
+local function promptWorldPos(prompt)
+    local p = prompt.Parent
+    while p and p ~= workspace do
+        if p:IsA("Attachment") then return p.WorldPosition end
+        if p:IsA("BasePart") then return p.Position end
+        p = p.Parent
+    end
+    return nil
+end
+
+-- หา ProximityPrompt ใต้ child ชื่อ promptName ("Prompt"/"Prompt2")
+local function slotPrompt(gen, promptName)
+    local pf = gen:FindFirstChild(promptName)
+    return pf and pf:FindFirstChildWhichIsA("ProximityPrompt", true)
+end
+-- หา teleport position ใน folder (รองรับ treadmill)
+local function slotStand(gen, folderNames)
+    for _, fn in pairs(folderNames) do
+        local f = gen:FindFirstChild(fn)
+        if f then
+            -- v4.19: ชื่อ part ใน treadmill folder ไม่แน่นอน → fallback หา BasePart ใดก็ได้
+            local tp = f:FindFirstChild("TreadmillTeleportPosition") or f:FindFirstChild("TeleportPosition")
+                or f:FindFirstChildWhichIsA("BasePart", true)
+            if tp and tp:IsA("BasePart") then return tp.Position end
+        end
+    end
+    return nil
+end
+
+-- เครื่องคู่: คืน prompt+standPos ของช่อง (1=Prompt/หลัก, 2=Prompt2/Mirror)
+-- เลือก folder ตามชนิด minigame ของช่องนั้น (Treadmill → TreadmillTeleportPositions)
+local function dualSlotData(gen, slot)
+    if slot == 2 then
+        local tread = tostring(gen:GetAttribute("Prompt2MinigameType")):find("Treadmill")
+        return slotPrompt(gen, "Prompt2"),
+               slotStand(gen, tread and { "TreadmillTeleportPositions_Mirror", "TeleportPositions_Mirror" }
+                                     or  { "TeleportPositions_Mirror", "TreadmillTeleportPositions_Mirror" })
+    else
+        local tread = tostring(gen:GetAttribute("MinigameType")):find("Treadmill")
+        return slotPrompt(gen, "Prompt"),
+               slotStand(gen, tread and { "TreadmillTeleportPositions", "TeleportPositions" }
+                                     or  { "TeleportPositions", "TreadmillTeleportPositions" })
+    end
+end
+
+-- v4.9: ลบ slotFriendNear — ใช้ Slot1Spinning/Slot2Spinning ของ server เป็น single source of truth
+-- เพื่อนยืนข้างๆเชียร์ = ไม่มีปัญหา (Spinning ไม่ขึ้นจนกว่าเพื่อนจะกด E เริ่มช่องนั้น)
+
+-- list เครื่องที่ยังไม่เสร็จ {gen, prompt, part, pos, standPos, friendBusy}
+function GEN.getPending()
+    local gf = WORLD.getGenerators()
+    if not gf then return {} end
+    local list = {}
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    for _, gen in pairs(gf:GetChildren()) do
+        local cv = gen:FindFirstChild("Completed", true)
+        local done = cv and cv:IsA("BoolValue") and cv.Value
+        -- v4.8: DualGen ไม่มี Completed BoolValue (มีแต่ PlayerCompletion folder)
+        -- → fallback ผ่าน CurrentAmount >= RequiredAmount กันยืนแช่หลังเครื่องเสร็จ
+        if not done then
+            local curV = gen:FindFirstChild("CurrentAmount", true)
+            local reqV = gen:FindFirstChild("RequiredAmount", true)
+            if curV and reqV and reqV.Value and reqV.Value > 0
+               and curV.Value and curV.Value >= reqV.Value then
+                done = true
+            end
+        end
+        if not done then
+            -- v4.19: detect dual ให้ตรงกับ spy (DW19/DW26) — IsDualGen/MachineFamily ไม่พอ
+            --   เครื่องคู่ treadmill บางตัวไม่มี attr → เช็คชื่อ + folder _Mirror ด้วย
+            --   (เดิมตกไป single branch → standPos ผิด → ยืนห่าง → E ไม่ติด = ไม่กดทำ)
+            local isDual = gen:GetAttribute("IsDualGen") == true
+                or gen:GetAttribute("MachineFamily") == "DUAL"
+                or gen.Name:lower():find("dual") ~= nil
+                or gen:FindFirstChild("TeleportPositions_Mirror", true) ~= nil
+                or gen:FindFirstChild("TreadmillTeleportPositions_Mirror", true) ~= nil
+            local prompt, standPos, friendBusy
+            local slot   -- ช่องเครื่องคู่ที่เลือก (1/2) — nil = เครื่องเดี่ยว
+
+            if isDual then
+                -- v4.9: เครื่องคู่ → เช็ค Slot1Spinning/Slot2Spinning ของ server อย่างเดียว
+                -- ช่องที่เราถืออยู่ (workSlot) ไม่นับเป็น busy แม้ Spinning=true
+                local s1Busy = gen:GetAttribute("Slot1Spinning") == true and STATE.workSlot ~= 1
+                local s2Busy = gen:GetAttribute("Slot2Spinning") == true and STATE.workSlot ~= 2
+                -- คงช่องเดิมของเรา (ถ้ายังถืออยู่)
+                if gen == STATE.workGenRef and STATE.workSlot then slot = STATE.workSlot end
+                if not slot then
+                    if not s1Busy then slot = 1
+                    elseif not s2Busy then slot = 2 end
+                end
+                friendBusy = (slot == nil)                 -- ทั้ง 2 ช่อง spin = ข้าม
+                if slot then prompt, standPos = dualSlotData(gen, slot) end
+            else
+                -- v4.15: เครื่องเดี่ยว — ถ้า "เรา Decoding = gen นี้" = ไม่บล็อก (กันเพื่อนเดินผ่าน Treadmill)
+                friendBusy = false
+                local myEntry = igp and igp:FindFirstChild(LP.Name)
+                local myDec   = myEntry and myEntry:FindFirstChild("Decoding")
+                local imWorking = myDec and myDec:IsA("ObjectValue") and myDec.Value == gen
+                if not imWorking and gen:GetAttribute("Slot1Spinning") == true then
+                    -- ไม่ใช่เรา + slot spin → verify เพื่อน Decoding ชี้ gen นี้
+                    local av  = gen:FindFirstChild("ActivePlayer", true)
+                    local who = av and av:IsA("ObjectValue") and av.Value
+                    if who and who ~= LP and who ~= LP.Character then
+                        local pname = (typeof(who) == "Instance" and who:IsA("Player")) and who.Name
+                            or (typeof(who) == "Instance" and who.Name)
+                        local pe = pname and igp and igp:FindFirstChild(pname)
+                        local dec = pe and pe:FindFirstChild("Decoding")
+                        if dec and dec:IsA("ObjectValue") and dec.Value == gen then
+                            friendBusy = true
+                        end
+                    end
+                end
+                prompt = gen:FindFirstChildWhichIsA("ProximityPrompt", true)
+                -- v4.19: standPos รองรับ treadmill (part อยู่ใน TreadmillTeleportPositions ชื่อไม่แน่นอน)
+                local tp = gen:FindFirstChild("TeleportPosition", true)
+                if not (tp and tp:IsA("BasePart")) then
+                    local tf = gen:FindFirstChild("TreadmillTeleportPositions")
+                        or gen:FindFirstChild("TeleportPositions")
+                    if tf then tp = tf:FindFirstChildWhichIsA("BasePart", true) end
+                end
+                standPos = (tp and tp:IsA("BasePart") and tp.Position)
+                    or (prompt and promptWorldPos(prompt))
+            end
+
+            -- v4.17: เครื่องใกล้เสร็จ (≥90%) → bypass friendBusy (เข้าไปจบ ไม่ปล่อยค้าง)
+            if friendBusy then
+                local cv = gen:FindFirstChild("CurrentAmount", true)
+                local rv = gen:FindFirstChild("RequiredAmount", true)
+                if cv and rv and rv.Value and rv.Value > 0
+                   and cv.Value and cv.Value / rv.Value >= 0.90 then
+                    friendBusy = false
+                end
+            end
+
+            local part = gen:FindFirstChildWhichIsA("BasePart", true)
+            local ok, piv = pcall(function() return gen:GetPivot().Position end)
+            local pos = ok and piv or (part and part.Position)
+            standPos = standPos or pos
+            if prompt and pos then
+                table.insert(list, { gen = gen, prompt = prompt, part = part, pos = pos,
+                                     standPos = standPos, friendBusy = friendBusy, slot = slot })
+            end
+        end
+    end
+    return list
+end
+
+-- เลือกเป้า: ใกล้สุดที่ไม่มีมอน > ถ้าไม่มี free + เหลือ 1 เครื่อง → hover
+-- คืน: target, mode ("work"/"hover"), pendingCount
+function GEN.pickTarget(hrpPos)
+    local pending = GEN.getPending()
+    if #pending == 0 then return nil, nil, 0 end
+
+    local now = tick()
+    local free = {}   -- ทำได้: ไม่มีเพื่อน + ไม่มีมอน + ไม่มีหนวด + ไม่ติด cooldown
+    for _, t in pairs(pending) do
+        if not t.friendBusy then
+            local near = GEN.monsterNear(t.pos) or SPROUT.nearMachine(t.pos)  -- มอน/หนวด ใกล้เครื่อง = เลี่ยง
+            if near then STATE.genBlock[t.gen] = now + CFG.FLEE_COOLDOWN end
+            local stillBlocked = STATE.genBlock[t.gen] and STATE.genBlock[t.gen] > now
+            if not near and not stillBlocked then table.insert(free, t) end
+        end
+    end
+
+    local function nearest(list)
+        local best, bd = nil, math.huge
+        for _, t in pairs(list) do
+            local d = (hrpPos - t.pos).Magnitude
+            if d < bd then bd = d best = t end
+        end
+        return best
+    end
+
+    if #free > 0 then
+        return nearest(free), "work", #pending
+    end
+    -- ไม่มีเครื่องทำได้ (เพื่อนทำหมด / มอนบล็อกหมด) → ลอยรอเหนือเครื่องที่ใกล้สุด (ไม่ยืนนิ่ง)
+    return nearest(pending), "hover", #pending
+end
+
+-- กดค้าง/ปล่อยปุ่มสกัด (E) — เครื่องเป็น prompt แบบ "hold" ต้องกดค้างจริง
+function GEN.hold(prompt)
+    local key = prompt and prompt.KeyboardKeyCode
+    if not key or key == Enum.KeyCode.Unknown then key = Enum.KeyCode.E end
+    if STATE.holdKey ~= key then
+        GEN.releaseHold()
+        pcall(function() VIM:SendKeyEvent(true, key, false, game) end)
+        STATE.holdKey = key
+    end
+end
+
+function GEN.releaseHold()
+    if STATE.holdKey then
+        local k = STATE.holdKey
+        STATE.holdKey = nil
+        pcall(function()
+            VIM:SendKeyEvent(false, k, false, game)   -- ปล่อยปุ่มที่ค้าง
+            -- แตะ E ซ้ำ = "หยุดการสกัด" (toggle off) ก่อนหนี — ไม่งั้นค้างทำเครื่อง
+            VIM:SendKeyEvent(true,  k, false, game)
+            VIM:SendKeyEvent(false, k, false, game)
+        end)
+    end
+end
+
+-- เครื่องที่ "server" คิดว่าเรากำลัง decode (nil = ออกจริงแล้ว) — เช็ค desync
+function GEN.serverDecoding()
+    local entry = WORLD.getEntry()
+    local dec = entry and entry:FindFirstChild("Decoding")
+    if dec and dec:IsA("ObjectValue") then return dec.Value end
+    return nil
+end
+
+-- ตอนต้อง "ออกจากเครื่อง" จริง: ถ้า server ยัง decode (desync) → tap E (cooldown 0.25s กัน toggle รัว)
+function GEN.forceStopDecode()
+    if GEN.serverDecoding() then
+        if tick() - (STATE.lastForceStop or 0) >= 0.25 then
+            STATE.lastForceStop = tick()
+            pcall(function()
+                VIM:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+                VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end)
+        end
+        return true   -- ยังค้าง (server ยัง decode)
+    end
+    return false      -- ออกจริงแล้ว
+end
+
+-- ทำเครื่อง: วาปยืน → กดค้าง E (สกัด) + fire prompt → DW16 skillcheck เติม (แกนหลัก)
+function GEN.work(hrp, target)
+    local cur = target.gen:FindFirstChild("CurrentAmount", true)
+    local req = target.gen:FindFirstChild("RequiredAmount", true)
+    local curVal = (cur and cur.Value) or 0
+
+    -- เปลี่ยนเครื่อง → "หยุดสกัดเครื่องเก่าก่อน" (กัน body ค้างหมุนที่เครื่องเดิม = desync)
+    if target.gen ~= STATE.workGenRef then
+        GEN.releaseHold()              -- E-tap หยุดสกัดเครื่องเก่า (ตอนยังอยู่จุดเดิม)
+        STATE.workGenRef     = target.gen
+        STATE.workSlot       = target.slot   -- ช่องเครื่องคู่ที่เลือก (nil=เดี่ยว)
+        STATE.workLastAmt    = curVal
+        STATE.workLastChange = tick()
+        STATE.workStarted    = false
+    end
+
+    STATE.curGenName = target.gen.Name
+    MOVE.applyNoclip(LP.Character)
+    -- ยืนตรงจุด prompt (standPos) — ใกล้พอให้ E สกัด ทำงาน
+    -- v4.13: ทั้งเดี่ยว + คู่ ใช้ Y+3 (HRP จมพื้น → prompt ไม่ติด)
+    local standOff = CFG.GEN_STAND_OFFSET
+    MOVE.lockAt(CFrame.new((target.standPos or target.part.Position) + standOff))
+    if curVal > STATE.workLastAmt + 0.01 then
+        STATE.workLastAmt    = curVal
+        STATE.workLastChange = tick()
+    end
+
+    local stalled = tick() - STATE.workLastChange > CFG.GEN_STALL
+    local hd = target.prompt.HoldDuration or 0
+    -- v4.16: revert v4.13 spam — Ichor prompt = toggle (กดสลับ on/off) → fire ครั้งเดียวพอ
+    GEN.hold(target.prompt)
+    if not STATE.workStarted or stalled then
+        pcall(function() fireproximityprompt(target.prompt, hd) end)
+        STATE.workStarted    = true
+        STATE.workLastChange = tick()
+    end
+
+    local slotTag = target.slot and (" [ช่อง" .. target.slot .. "]") or ""
+    if cur and req then
+        status("⚙️ " .. target.gen.Name .. slotTag .. " " .. math.floor(curVal) .. "/" .. math.floor(req.Value)
+            .. " | skill:" .. STATE.skillHits .. (stalled and " (re-สกัด)" or ""))
+    else
+        status("⚙️ ทำ " .. target.gen.Name .. slotTag .. " | skill:" .. STATE.skillHits)
+    end
+end
+
+-- ลอยรอเหนือเครื่อง 35 studs (รอมอนออกไป)
+function GEN.hover(hrp, target)
+    GEN.releaseHold()
+    GEN.forceStopDecode()   -- ลอยรอ = ต้องออกจากเครื่องจริง (กัน server ค้าง decode)
+    STATE.curGenName = target.gen.Name .. " (รอ)"
+    MOVE.applyNoclip(LP.Character)
+    local cf = CFrame.new(target.pos + Vector3.new(0, CFG.HOVER_HEIGHT, 0))
+    -- v4.14: ดับเบิลวาป + verify dist (กัน server lock ตำแหน่งเก่า = ตัวลอยแต่ยังโดนตี)
+    -- v4.18: pin = zero velocity ทุกครั้ง (กันตัวไหล/ตก → server reconcile)
+    MOVE.pin(hrp, cf)
+    if (hrp.Position - cf.Position).Magnitude > CFG.SEEN_VERIFY_DIST then
+        MOVE.pin(hrp, cf)
+        MOVE.pin(hrp, cf)
+    end
+    MOVE.lockAt(cf)
+    local _, mName = GEN.monsterNear(target.pos)
+    status("⬆️ ลอยรอ " .. CFG.HOVER_HEIGHT .. " เหนือ " .. target.gen.Name
+        .. (mName and (" (" .. mName .. ")") or ""))
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: HEAL — หัวใจลด → กดเลขช่อง hotbar ใช้ Bandage/Med
+--   hotbar = PlayerGui.ScreenGui (ช่องมี TextLabel เลข + item) | กดเลข = ใช้
+-- ════════════════════════════════════════════════════════════════
+local HEAL = {}
+local SLOT_KEY = {
+    [1] = Enum.KeyCode.One,  [2] = Enum.KeyCode.Two,   [3] = Enum.KeyCode.Three,
+    [4] = Enum.KeyCode.Four, [5] = Enum.KeyCode.Five,
+}
+
+-- หาเลขช่องที่มี item ตรงชื่อ — อ่านจาก InGamePlayers.<เรา>.Inventory.SlotN.Value (ชื่อจริง)
+function HEAL.findSlot(names)
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    local entry = igp and igp:FindFirstChild(LP.Name)
+    local inv = entry and entry:FindFirstChild("Inventory")
+    if not inv then return nil end
+    for n = 1, 6 do
+        local s = inv:FindFirstChild("Slot" .. n)
+        if s and s:IsA("ValueBase") then
+            local v = tostring(s.Value):lower()
+            if v ~= "" and v ~= "none" then
+                for _, nm in pairs(names) do
+                    if v:find(nm:lower()) then return n end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- แตะเลขช่อง (down → wait → up — กันแตะเร็วเกินไม่ติด)
+function HEAL.use(slot)
+    local key = SLOT_KEY[slot]
+    if not key then return end
+    task.spawn(function()
+        pcall(function()
+            VIM:SendKeyEvent(true,  key, false, game)
+            task.wait(0.06)
+            VIM:SendKeyEvent(false, key, false, game)
+        end)
+    end)
+end
+
+-- เช็คเลือด → ใช้ heal (throttle cooldown) — เรียกทุกเฟรม
+--   current = Humanoid.Health (อัปเดตจริง) | max = Humanoid.MaxHealth (Health NumberValue = stale อย่าใช้)
+function HEAL.check(char)
+    if not CFG.HEAL_ENABLE then return end
+    if tick() - (STATE.lastHeal or 0) < CFG.HEAL_COOLDOWN then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.MaxHealth <= 0 then return end
+    local missing = hum.MaxHealth - hum.Health
+    if missing < 1 then return end   -- เลือดเต็ม → กดไม่ได้ (เกมบล็อก)
+
+    local bSlot = CFG.HEAL_BANDAGE_SLOT or HEAL.findSlot(CFG.HEAL_BANDAGE_NAMES)
+    local mSlot = CFG.HEAL_MEDKIT_SLOT  or HEAL.findSlot(CFG.HEAL_MEDKIT_NAMES)
+    local slot, kind
+    if missing >= 2 then
+        slot, kind = (mSlot or bSlot), (mSlot and "Med" or "Bandage")  -- ขาด ≥2 → Med ก่อน
+    else
+        slot, kind = (bSlot or mSlot), (bSlot and "Bandage" or "Med")  -- ขาด 1 → Bandage ก่อน
+    end
+    if slot then
+        HEAL.use(slot)
+        STATE.lastHeal = tick()
+        status("❤️ heal " .. kind .. " ช่อง " .. slot .. " (ขาด " .. math.floor(missing) .. " ดวง)")
+    else
+        status("⚠️ ขาด " .. math.floor(missing) .. " ดวง แต่ไม่มี Bandage/Med ในช่อง")
+    end
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: FLOOR (จาก DW02 — reset + detect floor change)
+-- ════════════════════════════════════════════════════════════════
+local FLOOR = {}
+
+function FLOOR.reset()
+    STATE.warpedToElev    = false
+    STATE.lockedCFrame    = nil
+    STATE.cachedMonsters  = nil
+    STATE.cachedGenerators = nil
+    STATE.prevGenDone     = false
+    STATE.collectedOnDone = false
+    STATE.startCollectDone = false
+    STATE.grabRiseUntil   = nil
+    STATE.grabbers        = {}
+    STATE.circPrev        = {}
+    STATE.barPrev         = {}
+    STATE.monMove         = {}
+    STATE.dangerCF        = nil
+    STATE.workGenRef      = nil
+    STATE.workSlot        = nil
+    STATE.workStarted     = false
+    STATE.genBlock        = {}
+    STATE.seenUntil       = nil
+    STATE.seenCF          = nil
+    status("ชั้นใหม่ — reset")
+end
+
+function FLOOR.onNew(src)
+    FLOOR.reset()
+    warn("[DW17] ชั้นใหม่ (" .. src .. ") → reset")
+    task.spawn(function() task.wait(0.5) GRAB.watch() end)
+end
+
+function FLOOR.watch()
+    table.insert(_G.DW17_CONNS,
+        workspace.ChildAdded:Connect(function(child)
+            if child.Name == "CurrentRoom" then task.wait(1) FLOOR.onNew("CurrentRoom") end
+        end)
+    )
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: LOOP — main heartbeat
+-- ════════════════════════════════════════════════════════════════
+local LOOP = {}
+
+function LOOP.tick_FloorChange(genDoneNow)
+    -- 1) gen-state transition: เคยครบ → ไม่ครบ = ชั้นใหม่ (เชื่อถือสุด — แบบ DW02)
+    if STATE.prevGenDone and not genDoneNow then
+        FLOOR.onNew("gen-transition")
+        STATE.prevGenDone = genDoneNow
+        return
+    end
+    STATE.prevGenDone = genDoneNow
+    -- 2) Floor value (IntValue)
+    local ok, fl = pcall(function() return workspace.Info.Floor.Value end)
+    if ok and fl ~= STATE.lastFloor then
+        if STATE.lastFloor ~= nil then FLOOR.onNew("Floor=" .. tostring(fl)) end
+        STATE.lastFloor = fl
+        return
+    end
+    -- 3) map ref เปลี่ยน
+    local curMap = WORLD.getMap()
+    if curMap ~= STATE.lastMapRef then
+        if STATE.lastMapRef ~= nil then FLOOR.onNew("poll-map") end
+        STATE.lastMapRef = curMap
+    end
+end
+
+local conn = RS.Heartbeat:Connect(function()
+    if not _G.DW17_ON then
+        GEN.releaseHold()
+        if not STATE.warpedToElev then MOVE.removeFly() end
+        return
+    end
+
+    local char = LP.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- skillcheck: เช็คทุกเฟรม (เร็วสุด ไม่ throttle)
+    SKILL.step()
+
+    -- heal: หัวใจลด → กดเลขช่องใช้ Bandage/Med (throttle cooldown ภายใน)
+    HEAL.check(char)
+
+    -- poll grab ทุกเฟรม (ห้ามโดนจับ)
+    if not STATE.warpedToElev then GRAB.pollGrabbers() end
+
+    -- ── โดนจับ → บินค้างตามเวลา ──────────────────────────────────
+    if STATE.grabRiseUntil then
+        if tick() < STATE.grabRiseUntil then
+            GEN.releaseHold()
+            GEN.forceStopDecode()
+            MOVE.applyNoclip(char)   -- กัน weld/anchor ดึงกลับ (วาปไม่ติด → โดนตี)
+            if STATE.lockedCFrame then
+                MOVE.pin(hrp, STATE.lockedCFrame)
+                -- ดับเบิลวาป: ถ้ายังห่างเป้า = วาปไม่ติด → set ซ้ำ
+                if (hrp.Position - STATE.lockedCFrame.Position).Magnitude > CFG.SEEN_VERIFY_DIST then
+                    MOVE.pin(hrp, STATE.lockedCFrame)
+                end
+            end
+            status("🆘 หนีจับ " .. string.format("%.1f", STATE.grabRiseUntil - tick()) .. "s")
+            return
+        else
+            STATE.grabRiseUntil = nil
+        end
+    end
+
+    -- ── หนวด Sprout ใกล้ → หลบ "แนวราบ" ก่อนบินขึ้น ──────────────
+    -- (หนวดเสกรอบตัวที่ Y เดียวกัน → บินขึ้นไม่รอด ต้องหนีแนวราบ → priority สูงกว่า NoDecode)
+    if SPROUT.handle(hrp, char) then
+        GEN.releaseHold()
+        GEN.forceStopDecode()
+        return
+    end
+
+    -- ── มอนเห็นเรา (NoDecode) → บินหนีจนพ้นสายตา + grace ──────────
+    -- (พอลงมา pickTarget จะ reroute ไปเครื่องที่ไม่มีมอนเอง — เช็คแนวราบจากเครื่อง)
+    local entry = WORLD.getEntry()
+    local nd = entry and entry:FindFirstChild("NoDecode")
+    local seenNow = nd and nd:IsA("BoolValue") and nd.Value
+    if seenNow then STATE.seenUntil = tick() + CFG.SEEN_GRACE end
+    if STATE.seenUntil and tick() < STATE.seenUntil then
+        GEN.releaseHold()
+        GEN.forceStopDecode()   -- ยืนยันออกจากเครื่องจริง (server) ไม่งั้นโดนตีทั้งที่บินอยู่
+        MOVE.applyNoclip(char)
+        if not STATE.seenCF then
+            STATE.seenCF     = CFrame.new(hrp.Position + Vector3.new(0, CFG.SEEN_RISE, 0))
+            STATE.seenWarpAt = tick()
+        else
+            -- ดับเบิลเช็ค: เฟรมก่อน snap ไปแล้ว แต่ยังห่างเป้า = วาปไม่ติด/ค้าง → ดับเบิลวาป
+            local off = (hrp.Position - STATE.seenCF.Position).Magnitude
+            if off > CFG.SEEN_VERIFY_DIST then
+                MOVE.pin(hrp, STATE.seenCF)        -- วาปซ้ำครั้งที่ 1 (กันค้าง) + zero vel
+                MOVE.pin(hrp, STATE.seenCF)        -- ดับเบิลวาป (บาง executor ต้อง set ซ้ำ)
+                warn("[DW17] วาปไม่ติด (ห่าง " .. math.floor(off) .. ") → ดับเบิลวาป")
+            end
+            -- ยังถูกเห็นเกิน SEEN_RECHECK วิ → สูงไม่พอ/มอนยังตาม → ยกขึ้นอีกชั้น
+            if seenNow and tick() - (STATE.seenWarpAt or 0) >= CFG.SEEN_RECHECK then
+                STATE.seenCF     = STATE.seenCF + Vector3.new(0, CFG.SEEN_RISE, 0)
+                STATE.seenWarpAt = tick()
+                warn("[DW17] ยังถูกเห็น → ยกสูงอีก " .. CFG.SEEN_RISE)
+            end
+        end
+        STATE.lockedCFrame = STATE.seenCF
+        MOVE.pin(hrp, STATE.seenCF)
+        status("👁 ถูกเห็น! บินหนี " .. string.format("%.1f", STATE.seenUntil - tick()) .. "s")
+        return
+    else
+        STATE.seenCF     = nil
+        STATE.seenWarpAt = nil
+    end
+
+    local genDoneNow = WORLD.allGeneratorsDone()
+    LOOP.tick_FloorChange(genDoneNow)
+
+    -- ── วาปลิฟต์แล้ว ─────────────────────────────────────────────
+    if STATE.warpedToElev then
+        -- กันพลาด: เครื่องไม่ครบแล้ว = มาถึงชั้นใหม่ (genDoneNow อ่านจาก Info ไม่มี cache)
+        if not genDoneNow then
+            FLOOR.reset()          -- เคลียร์ warpedToElev + cache เก่า → ทำเครื่องต่อ
+            STATE.warpedAt = {}
+            -- ไม่ return → ตกลงไปหาเครื่องทำต่อเฟรมนี้เลย
+        else
+            GEN.releaseHold()
+            local cd = ELEV.getCountdown()
+            if cd then
+                for _, t in ipairs(CFG.ELEV_REWARP) do
+                    if cd <= t and not (STATE.warpedAt and STATE.warpedAt[t]) then
+                        STATE.warpedAt = STATE.warpedAt or {}
+                        STATE.warpedAt[t] = true
+                        ELEV.warp()
+                    end
+                end
+            end
+            MOVE.removeFly()
+            return
+        end
+    end
+
+    -- ── ครบทุกเครื่อง → เก็บ Research แล้วเข้าลิฟต์ทันที (ไม่รอเพื่อน) ─
+    if genDoneNow then
+        GEN.releaseHold()
+        if not STATE.collectedOnDone and not STATE.collectBusy then
+            STATE.collectedOnDone = true
+            status("🎒 ครบแล้ว — เก็บ Research")
+            COLLECT.run(function()
+                -- ดับเบิลวาป: วาปเข้าลิฟต์ 2 ครั้ง (กันวาปไม่ติด/โดนดึงหลุด)
+                ELEV.warp()
+                task.wait(CFG.DOUBLE_WARP_GAP)
+                ELEV.warp()
+            end, nil, CFG.ITEM_MONSTER_DIST_PANIC)   -- ช่วงแพนนิค → ระยะกันมอนมากขึ้น
+        end
+        if STATE.collectBusy then
+            MOVE.applyNoclip(char)
+            if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end
+        end
+        return
+    end
+
+    -- ── เข้าชั้นใหม่ → วาปเก็บของก่อนทำเครื่อง (ครั้งเดียวต่อชั้น) ───
+    if not STATE.startCollectDone and not STATE.collectBusy then
+        STATE.startCollectDone = true   -- กันเรียกซ้ำ (เก็บ async ใน COLLECT.run)
+        status("🎒 เข้าชั้นใหม่ — เก็บของก่อน")
+        COLLECT.run(nil, CFG.START_ITEM_NAMES)
+    end
+
+    -- ── กำลังเก็บของ → ปล่อยให้ COLLECT คุม position ──────────────
+    if STATE.collectBusy then
+        if STATE.collectStartAt and tick() - STATE.collectStartAt > 12 then
+            STATE.collectBusy = false
+        else
+            MOVE.applyNoclip(char)
+            if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end
+            return
+        end
+    end
+
+    -- throttle gen logic
+    if tick() - STATE.lastTick < CFG.LOOP_INTERVAL then
+        -- ยัง lock ตำแหน่งทุกเฟรม (กันตก)
+        MOVE.applyNoclip(char)
+        if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end
+        return
+    end
+    STATE.lastTick = tick()
+
+    -- ── Rodger/Razzle ตื่น → หลบก่อน (จนกว่าจะหลับ) ──────────────
+    if DANGER.handle(hrp, char) then GEN.releaseHold() return end
+    -- (SPROUT.handle ย้ายขึ้นไปก่อน NoDecode แล้ว — หนีแนวราบ priority สูง)
+
+    -- ── เลือกเครื่อง + ทำ/ลอยรอ ──────────────────────────────────
+    local target, mode = GEN.pickTarget(hrp.Position)
+    if not target then
+        GEN.releaseHold()
+        status("หาเครื่องไม่เจอ / ครบแล้ว")
+        MOVE.applyNoclip(char)
+        if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end
+        return
+    end
+    if mode == "work" then GEN.work(hrp, target) else GEN.hover(hrp, target) end
+end)
+table.insert(_G.DW17_CONNS, conn)
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: HOTKEY [H] toggle
+-- ════════════════════════════════════════════════════════════════
+local function setOn(v)
+    _G.DW17_ON = v
+    if v then
+        STATE.warpedToElev  = false
+        STATE.lockedCFrame  = nil
+        STATE.collectedOnDone = false
+        STATE.startCollectDone = false
+        STATE.warpedAt      = {}
+        GRAB.watch()
+        warn("[DW17] ON")
+    else
+        GEN.releaseHold()
+        MOVE.removeFly()
+        warn("[DW17] OFF")
+    end
+end
+
+table.insert(_G.DW17_CONNS,
+    UIS.InputBegan:Connect(function(inp, gpe)
+        if gpe then return end
+        if inp.KeyCode == Enum.KeyCode.H then setOn(not _G.DW17_ON) end
+    end)
+)
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: GUI
+-- ════════════════════════════════════════════════════════════════
+local old = pg:FindFirstChild("DW17GUI")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "DW17GUI" gui.ResetOnSpawn = false gui.Parent = pg
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 250, 0, 226)
+frame.Position = UDim2.new(0, 10, 0.5, -60)
+frame.BackgroundColor3 = Color3.fromRGB(12,12,18)
+frame.BorderSizePixel = 0 frame.Active = true frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size = UDim2.new(1, -26, 0, 24)
+titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
+titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
+titleLbl.Text = "DW Auto Gen v4.19 [H]"
+titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
+titleLbl.Parent = frame
+Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 24, 0, 24) closeBtn.Position = UDim2.new(1, -24, 0, 0)
+closeBtn.BackgroundColor3 = Color3.fromRGB(160,30,30) closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.Text = "X" closeBtn.Font = Enum.Font.Code closeBtn.TextSize = 12 closeBtn.BorderSizePixel = 0
+closeBtn.Parent = frame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function()
+    for _, c in pairs(_G.DW17_CONNS) do pcall(function() c:Disconnect() end) end
+    GEN.releaseHold()
+    MOVE.removeFly()
+    gui:Destroy()
+end)
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, -8, 0, 30) toggleBtn.Position = UDim2.new(0, 4, 0, 28)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(60,60,60) toggleBtn.TextColor3 = Color3.new(1,1,1)
+toggleBtn.Text = "เริ่ม (OFF)" toggleBtn.Font = Enum.Font.Code toggleBtn.TextSize = 14 toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = frame
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 5)
+local function refreshToggle()
+    toggleBtn.Text = _G.DW17_ON and "หยุด (ON)" or "เริ่ม (OFF)"
+    toggleBtn.BackgroundColor3 = _G.DW17_ON and Color3.fromRGB(20,120,40) or Color3.fromRGB(60,60,60)
+end
+toggleBtn.MouseButton1Click:Connect(function() setOn(not _G.DW17_ON) refreshToggle() end)
+
+local function mkInfo(y, col) local l=Instance.new("TextLabel")
+    l.Size=UDim2.new(1,-8,0,16) l.Position=UDim2.new(0,6,0,y)
+    l.BackgroundTransparency=1 l.TextColor3=col or Color3.fromRGB(200,220,200)
+    l.Font=Enum.Font.Code l.TextSize=11 l.TextXAlignment=Enum.TextXAlignment.Left
+    l.Text="" l.Parent=frame return l end
+local info1 = mkInfo(64, Color3.fromRGB(160,255,180))
+local info2 = mkInfo(82, Color3.fromRGB(200,200,200))
+local info3 = mkInfo(100, Color3.fromRGB(150,180,255))
+
+-- ── ปุ่มจูน: row helper ──────────────────────────────────────────
+local function mkTuneRow(y, labelTxt, labelCol, getVal, setVal, steps)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(0, 92, 0, 22) lbl.Position = UDim2.new(0, 6, 0, y)
+    lbl.BackgroundTransparency = 1 lbl.TextColor3 = labelCol
+    lbl.Font = Enum.Font.Code lbl.TextSize = 11 lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = frame
+    local function refresh() lbl.Text = labelTxt .. getVal() end
+    local x = 100
+    for _, s in ipairs(steps) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 34, 0, 22) b.Position = UDim2.new(0, x, 0, y)
+        b.BackgroundColor3 = Color3.fromRGB(40,45,65) b.TextColor3 = Color3.new(1,1,1)
+        b.Text = s.t b.Font = Enum.Font.Code b.TextSize = 11 b.BorderSizePixel = 0 b.Parent = frame
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+        b.MouseButton1Click:Connect(function() setVal(s.d) refresh() end)
+        x = x + 36
+    end
+    refresh()
+    return refresh
+end
+
+mkTuneRow(126, "mon dist:", Color3.fromRGB(255,150,150),
+    function() return tostring(CFG.MON_NEAR_GEN) end,
+    function(d) CFG.MON_NEAR_GEN = math.clamp(CFG.MON_NEAR_GEN + d, 5, 120) end,
+    {{t="-5",d=-5},{t="-1",d=-1},{t="+1",d=1},{t="+5",d=5}})
+
+mkTuneRow(152, "circ trig:", Color3.fromRGB(255,200,120),
+    function() return string.format("%.2f", CFG.CIRCLE_TRIGGER) end,
+    function(d) CFG.CIRCLE_TRIGGER = math.clamp(CFG.CIRCLE_TRIGGER + d, 0.70, 1.40) end,
+    {{t="-.05",d=-0.05},{t="-.02",d=-0.02},{t="+.02",d=0.02},{t="+.05",d=0.05}})
+
+mkTuneRow(178, "bar lead:", Color3.fromRGB(120,200,255),
+    function() return tostring(CFG.BAR_LEAD) end,
+    function(d) CFG.BAR_LEAD = math.clamp(CFG.BAR_LEAD + d, -10, 10) end,
+    {{t="-2",d=-2},{t="-1",d=-1},{t="+1",d=1},{t="+2",d=2}})
+
+-- ── status updater ───────────────────────────────────────────────
+table.insert(_G.DW17_CONNS,
+    RS.Heartbeat:Connect(function()
+        if tick() % 0.25 < 0.05 then
+            refreshToggle()
+            info1.Text = STATE.lastStatus
+            local ok, c = pcall(function() return workspace.Info.GeneratorsCompleted.Value end)
+            local ok2, r = pcall(function() return workspace.Info.RequiredGenerators.Value end)
+            local gstr = (ok and ok2) and (c.."/"..r) or "?/?"
+            info2.Text = "Gen:" .. gstr .. "  เครื่อง:" .. STATE.curGenName
+            local dec = GEN.serverDecoding()
+            info3.Text = "skill:" .. STATE.skillHits .. "  decode:" .. (dec and dec.Name or "nil")
+        end
+    end)
+)
+
+-- ════════════════════════════════════════════════════════════════
+-- BOOT
+-- ════════════════════════════════════════════════════════════════
+FLOOR.watch()
+STATE.lastMapRef = WORLD.getMap()
+pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
+refreshToggle()
+warn("[DW17] Auto Gen v4.19 loaded — fix detect เครื่องคู่ (name/_Mirror folder) + standPos treadmill robust (กดทำเครื่องคู่ได้)")
+warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
+    .. " | VIM = " .. tostring(VIM ~= nil))
