@@ -21,7 +21,7 @@ local UIS  = game:GetService("UserInputService")
 local VIM  = game:GetService("VirtualInputManager")
 
 -- ════════════════════════════════════════════════════════════════
--- MODULE: CFG
+-- MODULE: CFG 
 -- ════════════════════════════════════════════════════════════════
 local CFG = {
     LOOP_INTERVAL    = 0.08,  -- throttle logic ทุกกี่วิ
@@ -48,11 +48,11 @@ local CFG = {
     GRAB_RISE        = 60,    -- บินทะลุขึ้นกี่ studs ตอนโดน/จะโดนจับ
     GRAB_RISE_TIME   = 3,     -- บินค้างกี่วิ
     -- DANGER: ตื่นเมื่อไหร่ต้องหลบ จนกว่าจะหลับ (Rodger=ลอย, Razzle&Dazzle=หลบแนวราบ)
-    AWAKE_RISE_NAMES = { "rodger" },            -- ตื่น → ลอยขึ้น DANGER_RISE
-    AWAKE_FLEE_NAMES = { "razzle", "dazzle" },  -- ตื่น → หลบแนวราบ (ลอยไม่รอด)
+    AWAKE_RISE_NAMES = { },            -- ตื่น → ลอยขึ้น DANGER_RISE
+    AWAKE_FLEE_NAMES = { "razzle", "dazzle" ,"rodger" },  -- ตื่น → หลบแนวราบ (ลอยไม่รอด)
     DANGER_RISE      = 50,    -- Rodger ตื่น → ลอยขึ้นกี่ studs
     DANGER_DIST      = 60,    -- react Rodger ตื่น เมื่อใกล้กว่านี้
-    RAZZLE_SAFE_DIST = 30,    -- ห่าง Razzle&Dazzle อย่างน้อยกี่ studs
+    RAZZLE_SAFE_DIST = 80,    -- ห่าง Razzle&Dazzle อย่างน้อยกี่ studs
     MOVE_THRESHOLD   = 1.5,   -- ขยับ ≥ นี้ต่อ sample = "ตื่น"
     AWAKE_HOLD       = 2,     -- ถือว่ายัง "ตื่น" กี่วิหลังขยับล่าสุด
     -- SPROUT: หนวด = Model "SproutTendril" ใน CurrentRoom.<Map>.FreeArea (ไม่ใช่ใน Monsters!)
@@ -66,9 +66,10 @@ local CFG = {
     ITEM_NAMES       = { "ResearchCapsule" },
                         
     -- เก็บตอนเข้าชั้นใหม่ (ก่อนทำเครื่อง) — item ช่วยทำเครื่อง/ฮีล ถ้ามีในห้อง
-    START_ITEM_NAMES = { "Instructions", "Extraction", "Jumper",
-                         "Valve", "Jawbreaker", "Bottle", "Box",
-                         "Bandage", "Bandages", "Health Kit", "HealthKit", "Medkit", "MedKit" },
+    START_ITEM_NAMES = { "Instructions", "Extraction Speed Candy", "Jumper Cable",
+                         "Valve", "Jawbreaker", "Bottle o' Pop", "Box o' Chocolates",
+                      -- "Bandage", "Bandages", "Health Kit", "HealthKit", "Medkit", "MedKit"
+                       },
     ITEM_MONSTER_DIST = 18,   -- มอนใกล้ item เกินนี้ → ไม่เก็บ (เก็บตอนเข้าชั้น)
     ITEM_MONSTER_DIST_PANIC = 28,  -- ช่วงแพนนิค (เครื่องครบ) มอนดุ → เพิ่มระยะกันเก็บ
     ITEM_UNDER       = 4,     -- วาปลงใต้ item กี่ studs
