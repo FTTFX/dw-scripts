@@ -66,8 +66,8 @@ local CFG = {
     ITEM_NAMES       = { "ResearchCapsule" },
                         
     -- เก็บตอนเข้าชั้นใหม่ (ก่อนทำเครื่อง) — item ช่วยทำเครื่อง/ฮีล ถ้ามีในห้อง
-    START_ITEM_NAMES = { "Instructions", "Extraction Speed Candy", "Jumper Cable",
-                         "Valve", "Jawbreaker", "Bottle o' Pop", "Box o' Chocolates",
+    START_ITEM_NAMES = { "Instructions", "Extraction", "Jumper",
+                         "Valve", "Jawbreaker", "Bottle", "Box",
                          "Bandage", "Bandages", "Health Kit", "HealthKit", "Medkit", "MedKit" },
     ITEM_MONSTER_DIST = 18,   -- มอนใกล้ item เกินนี้ → ไม่เก็บ (เก็บตอนเข้าชั้น)
     ITEM_MONSTER_DIST_PANIC = 28,  -- ช่วงแพนนิค (เครื่องครบ) มอนดุ → เพิ่มระยะกันเก็บ
