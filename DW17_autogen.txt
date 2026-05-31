@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.26
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.27
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -843,8 +843,12 @@ function GEN.getPending()
         --   → บอทคิดว่าเครื่องเสร็จทั้งที่ยังไม่เสร็จ → ปล่อยทิ้ง ("หาเครื่องไม่เจอ/ครบแล้ว")
         local stats = gen:FindFirstChild("Stats")
         local cv = (stats and stats:FindFirstChild("Completed")) or gen:FindFirstChild("Completed", true)
-        local done = cv and cv:IsA("BoolValue") and cv.Value
-        if not done then
+        local hasCompleted = cv and cv:IsA("BoolValue")
+        local done = hasCompleted and cv.Value
+        -- v4.27: ใช้ cur>=req fallback "เฉพาะตอนไม่มี Completed BoolValue เลย"
+        --   เดิม cur 45.41 >= req 45 → done ผิด ทั้งที่ Completed=false (โดนตีบินหนีตอนเกือบจบ → ทิ้งไม่กลับไปจบ)
+        --   spy ยืนยัน Stats.Completed มีจริง → เชื่อ Completed เป็นหลัก
+        if not done and not hasCompleted then
             local curV = (stats and stats:FindFirstChild("CurrentAmount")) or gen:FindFirstChild("CurrentAmount", true)
             local reqV = (stats and stats:FindFirstChild("RequiredAmount")) or gen:FindFirstChild("RequiredAmount", true)
             if curV and reqV and reqV.Value and reqV.Value > 0
@@ -1491,7 +1495,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.26 [H]"
+titleLbl.Text = "DW Auto Gen v4.27 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1590,6 +1594,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.26 loaded — HP ลด=บินหนีทันที (ห้ามตาย) + dual จองหมด hover รอ (ไม่ยืนเฉย)")
+warn("[DW17] Auto Gen v4.27 loaded — done เชื่อ Stats.Completed (เลิกเดา cur>=req) → กลับไปจบเครื่องที่ทิ้งตอนเกือบเสร็จ")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
