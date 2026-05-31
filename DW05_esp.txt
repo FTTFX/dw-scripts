@@ -229,6 +229,16 @@ local function mkDisc(pos, normal, color)   -- วงแบนติดผิว
     p.Parent = workspace
     table.insert(wallMarks, p) ; table.insert(_G.DW05_HLS, p)
 end
+-- v1.4b: วงแหวนรัศมีรอบเครื่อง (โชว์เขตที่มอนเริ่มบล็อก = MON_NEAR)
+local function mkRing(center, radius, color)
+    local SEG, prev = 40, nil
+    for i = 0, SEG do
+        local ang = (i / SEG) * math.pi * 2
+        local pt = center + Vector3.new(math.cos(ang) * radius, 0, math.sin(ang) * radius)
+        if prev then mkLine(prev, pt, color) end
+        prev = pt
+    end
+end
 
 local lastWallTick = 0
 local function updateWallRay()
@@ -247,6 +257,19 @@ local function updateWallRay()
     for _, gen in pairs(genF:GetChildren()) do
         local ok, gpos = pcall(function() return gen:GetPivot().Position end)
         if ok then
+            -- หาพื้นใต้เครื่อง (raycast ลง) → วางวงแหวนบนพื้น
+            local rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Exclude
+            rp.FilterDescendantsInstances = { gen, LP.Character }
+            local down = workspace:Raycast(gpos, Vector3.new(0, -60, 0), rp)
+            local ringC = Vector3.new(gpos.X, (down and down.Position.Y + 0.3) or gpos.Y, gpos.Z)
+            -- มีมอนในวงไหม → วงแดง, ไม่มี → ฟ้า
+            local anyIn = false
+            for _, mo in pairs(mons) do
+                local dd = mo.hrp.Position - gpos
+                if math.sqrt(dd.X*dd.X + dd.Z*dd.Z) <= CFG.MON_NEAR then anyIn = true break end
+            end
+            mkRing(ringC, CFG.MON_NEAR, anyIn and Color3.fromRGB(255,60,60) or Color3.fromRGB(0,200,255))
             for _, mo in pairs(mons) do
                 local d = mo.hrp.Position - gpos
                 if math.sqrt(d.X*d.X + d.Z*d.Z) <= CFG.MON_NEAR then
