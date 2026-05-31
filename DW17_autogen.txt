@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.29
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.30
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -644,8 +644,31 @@ local function COLLECT_fleeing()
     return (STATE.seenUntil and tick() < STATE.seenUntil) or STATE.grabRiseUntil ~= nil
 end
 
-function COLLECT.run(onDone, names, monDist)
+-- v4.30: กระเป๋าเต็มไหม — ทุก Slot ใน Inventory มีของ (ไม่ว่าง/ไม่ none) = เต็ม → ไม่ต้องเก็บไอเทม
+function COLLECT.inventoryFull()
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    local entry = igp and igp:FindFirstChild(LP.Name)
+    local inv = entry and entry:FindFirstChild("Inventory")
+    if not inv then return false end   -- หาไม่เจอ = ไม่บล็อก (กันพลาด)
+    local total, filled = 0, 0
+    for _, s in pairs(inv:GetChildren()) do
+        if s:IsA("ValueBase") and s.Name:find("Slot") then
+            total = total + 1
+            local v = tostring(s.Value):lower()
+            if v ~= "" and v ~= "none" then filled = filled + 1 end
+        end
+    end
+    return total > 0 and filled >= total
+end
+
+function COLLECT.run(onDone, names, monDist, checkFull)
     if STATE.collectBusy then if onDone then onDone() end return end
+    -- v4.30: เก็บไอเทมเข้าช่อง (START_ITEM) แต่กระเป๋าเต็ม → ข้ามเลย (Research ไม่กินช่อง = ไม่ส่ง checkFull)
+    if checkFull and COLLECT.inventoryFull() then
+        status("🎒 กระเป๋าเต็ม — ไม่เก็บ")
+        if onDone then onDone() end
+        return
+    end
     monDist = monDist or CFG.ITEM_MONSTER_DIST
     STATE.collectBusy = true
     STATE.collectStartAt = tick()
@@ -1444,7 +1467,7 @@ local conn = RS.Heartbeat:Connect(function()
     if not STATE.startCollectDone and not STATE.collectBusy then
         STATE.startCollectDone = true   -- กันเรียกซ้ำ (เก็บ async ใน COLLECT.run)
         status("🎒 เข้าชั้นใหม่ — เก็บของก่อน")
-        COLLECT.run(nil, CFG.START_ITEM_NAMES)
+        COLLECT.run(nil, CFG.START_ITEM_NAMES, nil, true)   -- v4.30: checkFull=true (กระเป๋าเต็มข้ามเก็บ)
     end
 
     -- ── กำลังเก็บของ → ปล่อยให้ COLLECT คุม position ──────────────
@@ -1534,7 +1557,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.29 [H]"
+titleLbl.Text = "DW Auto Gen v4.30 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1633,6 +1656,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.29 loaded — รีเช็ควาป: ตัวไม่ขึ้น/server ยัง decode → unstick (ปลด seat/weld/jump) + วาปซ้ำ")
+warn("[DW17] Auto Gen v4.30 loaded — เช็คกระเป๋าเต็ม → ข้ามเก็บ START item (Research ยังเก็บได้)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
