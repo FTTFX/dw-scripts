@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.32
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.33
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -1259,6 +1259,8 @@ function FLOOR.reset()
     STATE.prevGenDone     = false
     STATE.collectedOnDone = false
     STATE.startCollectDone = false
+    STATE.collectBusy     = false   -- v4.33: เดิมไม่ reset → ถ้าค้าง true จากชั้นก่อน start-collect ถูกข้ามตลอด
+    STATE.collectStartAt  = nil
     STATE.grabRiseUntil   = nil
     STATE.grabbers        = {}
     STATE.circPrev        = {}
@@ -1471,7 +1473,11 @@ local conn = RS.Heartbeat:Connect(function()
     -- ── เข้าชั้นใหม่ → วาปเก็บของก่อนทำเครื่อง (ครั้งเดียวต่อชั้น) ───
     if not STATE.startCollectDone and not STATE.collectBusy then
         STATE.startCollectDone = true   -- กันเรียกซ้ำ (เก็บ async ใน COLLECT.run)
-        status("🎒 เข้าชั้นใหม่ — เก็บของก่อน")
+        -- v4.33: debug — โชว์ว่าเจอ item กี่ชิ้น + กระเป๋าเต็มไหม (รู้ว่าทำไมเก็บ/ไม่เก็บ)
+        local nItem = #COLLECT.getAvailableItems(CFG.START_ITEM_NAMES)
+        local full  = COLLECT.inventoryFull()
+        status(string.format("🎒 เข้าชั้นใหม่ — item:%d full:%s", nItem, full and "Y" or "N"))
+        warn(string.format("[DW17] start-collect: เจอ item=%d, กระเป๋าเต็ม=%s", nItem, tostring(full)))
         COLLECT.run(nil, CFG.START_ITEM_NAMES, nil, true)   -- v4.30: checkFull=true (กระเป๋าเต็มข้ามเก็บ)
     end
 
@@ -1562,7 +1568,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.32 [H]"
+titleLbl.Text = "DW Auto Gen v4.33 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1661,6 +1667,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.32 loaded — mount เครื่องชัวร์ขึ้น: snap จุดยืน+พยายามถี่ 0.5s ตอนยังไม่ขึ้น (กัน treadmill บางทีไม่ติด)")
+warn("[DW17] Auto Gen v4.33 loaded — fix collectBusy ไม่ reset ตอนเปลี่ยนชั้น (start-collect ถูกข้าม) + debug item/full")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
