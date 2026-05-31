@@ -1,0 +1,319 @@
+-- DW26_dualposspy.txt — Dandy's World DualGen TeleportPositions Spy v1.0
+-- เปิดดูข้างใน TeleportPositions folders ทั้ง 4 ของเครื่องคู่ใกล้สุด
+-- เป้าหมาย: ยืนยันชื่อ Part standPos ของแต่ละแบบ (Circle/Original/Treadmill × ช่อง1/2)
+-- รันที่ floor ที่มีเครื่องคู่แบบ Treadmill ถ้าได้
+
+local LP = game.Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+
+-- ── 1. Guard ─────────────────────────────────────────────────────
+local old = pg:FindFirstChild("DW26GUI")
+if old then old:Destroy() end
+
+-- ── 2. GUI ───────────────────────────────────────────────────────
+local gui = Instance.new("ScreenGui")
+gui.Name         = "DW26GUI"
+gui.ResetOnSpawn = false
+gui.Parent       = pg
+
+local frame = Instance.new("Frame")
+frame.Size             = UDim2.new(0, 620, 0, 500)
+frame.Position         = UDim2.new(0.5, -310, 0.5, -250)
+frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+frame.BorderSizePixel  = 0
+frame.Active           = true
+frame.Draggable        = true
+frame.Parent           = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local titleBar = Instance.new("Frame")
+titleBar.Size             = UDim2.new(1, 0, 0, 28)
+titleBar.BackgroundColor3 = Color3.fromRGB(20, 100, 80)
+titleBar.BorderSizePixel  = 0
+titleBar.Parent           = frame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size                   = UDim2.new(1, -140, 1, 0)
+titleLbl.Position               = UDim2.new(0, 10, 0, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.TextColor3             = Color3.fromRGB(100, 255, 200)
+titleLbl.Text                   = "DW26 DualGen Pos Spy v1.0"
+titleLbl.Font                   = Enum.Font.Code
+titleLbl.TextSize               = 12
+titleLbl.TextXAlignment         = Enum.TextXAlignment.Left
+titleLbl.Parent                 = titleBar
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size             = UDim2.new(0, 70, 0, 22)
+copyBtn.Position         = UDim2.new(1, -136, 0, 3)
+copyBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 50)
+copyBtn.TextColor3       = Color3.new(1,1,1)
+copyBtn.Text             = "Copy"
+copyBtn.Font             = Enum.Font.Code
+copyBtn.TextSize         = 12
+copyBtn.BorderSizePixel  = 0
+copyBtn.Parent           = titleBar
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
+
+local rescanBtn = Instance.new("TextButton")
+rescanBtn.Size             = UDim2.new(0, 60, 0, 22)
+rescanBtn.Position         = UDim2.new(1, -200, 0, 3)
+rescanBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 110)
+rescanBtn.TextColor3       = Color3.new(1,1,1)
+rescanBtn.Text             = "Rescan"
+rescanBtn.Font             = Enum.Font.Code
+rescanBtn.TextSize         = 11
+rescanBtn.BorderSizePixel  = 0
+rescanBtn.Parent           = titleBar
+Instance.new("UICorner", rescanBtn).CornerRadius = UDim.new(0, 4)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size             = UDim2.new(0, 60, 0, 22)
+closeBtn.Position         = UDim2.new(1, -64, 0, 3)
+closeBtn.BackgroundColor3 = Color3.fromRGB(120, 20, 20)
+closeBtn.TextColor3       = Color3.new(1,1,1)
+closeBtn.Text             = "ปิด"
+closeBtn.Font             = Enum.Font.Code
+closeBtn.TextSize         = 12
+closeBtn.BorderSizePixel  = 0
+closeBtn.Parent           = titleBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size               = UDim2.new(1, -8, 1, -34)
+scroll.Position           = UDim2.new(0, 4, 0, 30)
+scroll.BackgroundColor3   = Color3.fromRGB(8, 8, 14)
+scroll.BorderSizePixel    = 0
+scroll.ScrollBarThickness = 5
+scroll.CanvasSize         = UDim2.new(0, 0, 0, 0)
+scroll.Parent             = frame
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 4)
+local padS = Instance.new("UIPadding") padS.PaddingLeft = UDim.new(0, 6) padS.Parent = scroll
+local layout = Instance.new("UIListLayout")
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding   = UDim.new(0, 1) layout.Parent = scroll
+
+local copyBox = Instance.new("TextBox")
+copyBox.Size             = UDim2.new(1, -8, 1, -34)
+copyBox.Position         = UDim2.new(0, 4, 0, 30)
+copyBox.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+copyBox.TextColor3       = Color3.fromRGB(180, 255, 180)
+copyBox.Font             = Enum.Font.Code
+copyBox.TextSize         = 11
+copyBox.TextXAlignment   = Enum.TextXAlignment.Left
+copyBox.TextYAlignment   = Enum.TextYAlignment.Top
+copyBox.MultiLine        = true
+copyBox.ClearTextOnFocus = false
+copyBox.Text             = ""
+copyBox.BorderSizePixel  = 0
+copyBox.Visible          = false
+copyBox.Parent           = frame
+Instance.new("UICorner", copyBox).CornerRadius = UDim.new(0, 4)
+local padB = Instance.new("UIPadding") padB.PaddingLeft = UDim.new(0, 6)
+padB.PaddingTop = UDim.new(0, 4) padB.Parent = copyBox
+
+-- ── 3. Helper ─────────────────────────────────────────────────────
+local copyLines = {}
+local order     = 0
+local C = {
+    Y = Color3.fromRGB(255, 210,   0),
+    G = Color3.fromRGB( 80, 255, 120),
+    B = Color3.fromRGB(140, 160, 255),
+    O = Color3.fromRGB(255, 160,  50),
+    W = Color3.fromRGB(210, 210, 210),
+    S = Color3.fromRGB(140, 140, 140),
+    R = Color3.fromRGB(255,  90,  90),
+    T = Color3.fromRGB(100, 255, 200),
+}
+local function addLine(txt, col)
+    order += 1
+    local l = Instance.new("TextLabel")
+    l.Size                   = UDim2.new(1, -12, 0, 15)
+    l.BackgroundTransparency = 1
+    l.Font                   = Enum.Font.Code
+    l.TextSize               = 11
+    l.TextXAlignment         = Enum.TextXAlignment.Left
+    l.TextTruncate           = Enum.TextTruncate.AtEnd
+    l.TextColor3             = col or C.W
+    l.Text                   = txt
+    l.LayoutOrder            = order
+    l.Parent                 = scroll
+    table.insert(copyLines, txt)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+end
+
+copyBtn.MouseButton1Click:Connect(function()
+    local full = table.concat(copyLines, "\n")
+    local clip = setclipboard or toclipboard or write_clipboard
+        or (getgenv and getgenv().setclipboard)
+    local ok = clip and pcall(clip, full)
+    if ok then
+        copyBtn.Text = "Copied!"
+        task.delay(2, function() if copyBtn.Parent then copyBtn.Text = "Copy" end end)
+    else
+        scroll.Visible = false
+        copyBox.Visible = true
+        copyBox.Text = full
+        copyBox:CaptureFocus()
+        copyBox.SelectionStart = 1
+        copyBox.CursorPosition = #full + 1
+        copyBtn.Text = "Ctrl+C"
+    end
+end)
+
+local function getGenFolder()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, m in pairs(cr:GetChildren()) do
+            local g = m:FindFirstChild("Generators")
+            if g then return g end
+        end
+    end
+    return nil
+end
+
+local function isDualGen(g)
+    local fam = g:GetAttribute("MachineFamily")
+    return (fam == "DUAL") or g.Name:lower():find("dual")
+        or g:FindFirstChild("TeleportPositions_Mirror", true) ~= nil
+end
+
+-- หา prompt ของแต่ละช่อง (Prompt = ช่อง 1, Prompt2 = ช่อง 2)
+local function findPrompt(gen, side)  -- side = "Prompt" or "Prompt2"
+    local p = gen:FindFirstChild(side)
+    if not p then return nil end
+    local att = p:FindFirstChild("Attachment")
+    if not att then return nil end
+    return att:FindFirstChildWhichIsA("ProximityPrompt")
+end
+
+local function posStr(part)
+    if not part then return "(nil)" end
+    local p = part.Position
+    return string.format("(%.1f, %.1f, %.1f)", p.X, p.Y, p.Z)
+end
+
+local function distFromMe(part)
+    if not part then return -1 end
+    local c = LP.Character ; local h = c and c:FindFirstChild("HumanoidRootPart")
+    if not h then return -1 end
+    return (part.Position - h.Position).Magnitude
+end
+
+-- dump folder TeleportPositions ทั้งหมด
+local function dumpPosFolder(folder, label)
+    if not folder then
+        addLine("  ❌ ไม่มี " .. label, C.O)
+        return
+    end
+    local kids = folder:GetChildren()
+    if #kids == 0 then
+        addLine("  ⚠ " .. label .. " : ว่าง (0 children)", C.O)
+        return
+    end
+    addLine("  📁 " .. label .. " : " .. #kids .. " children", C.G)
+    for _, ch in pairs(kids) do
+        if ch:IsA("BasePart") then
+            addLine(string.format("    ⭐ [Part] %s @ %s | dist=%.1f",
+                ch.Name, posStr(ch), distFromMe(ch)), C.B)
+        else
+            addLine(string.format("    [%s] %s", ch.ClassName, ch.Name), C.W)
+            -- ดูลึก 1 ระดับ
+            for _, sub in pairs(ch:GetChildren()) do
+                if sub:IsA("BasePart") then
+                    addLine(string.format("      [Part] %s @ %s", sub.Name, posStr(sub)), C.S)
+                else
+                    addLine(string.format("      [%s] %s", sub.ClassName, sub.Name), C.S)
+                end
+            end
+        end
+    end
+end
+
+-- ── 4. Scan ───────────────────────────────────────────────────────
+local function scan()
+    for _, ch in pairs(scroll:GetChildren()) do
+        if ch:IsA("TextLabel") then ch:Destroy() end
+    end
+    copyLines = {} order = 0
+
+    addLine("=== DW26 DUALGEN POSITIONS SPY v1.0 ===", C.T)
+    addLine("", C.S)
+
+    local gf = getGenFolder()
+    if not gf then addLine("❌ ไม่เจอ Generators (อยู่ในล็อบบี้?)", C.R) return end
+
+    -- หา DualGen ทั้งหมด
+    local duals = {}
+    for _, g in pairs(gf:GetChildren()) do
+        if isDualGen(g) then table.insert(duals, g) end
+    end
+
+    if #duals == 0 then
+        addLine("⚠ ไม่เจอ DualGen ในชั้นนี้", C.O)
+        copyBox.Text = table.concat(copyLines, "\n")
+        return
+    end
+
+    addLine("เจอ DualGen " .. #duals .. " ตัว", C.Y)
+    addLine("", C.S)
+
+    for i, gen in ipairs(duals) do
+        local mt1 = gen:GetAttribute("MinigameType")        or "?"
+        local mt2 = gen:GetAttribute("Prompt2MinigameType") or "?"
+        addLine(string.format("════ #%d  %s ════", i, gen.Name), C.Y)
+        addLine(string.format("  ช่อง 1 (Left/Prompt)  = %s", mt1), C.T)
+        addLine(string.format("  ช่อง 2 (Right/Prompt2) = %s", mt2), C.T)
+        addLine("", C.S)
+
+        -- Prompt ของแต่ละช่อง + position
+        addLine("  ── Prompts ──", C.B)
+        for _, side in ipairs({"Prompt", "Prompt2"}) do
+            local promptPart = gen:FindFirstChild(side)
+            local pp = findPrompt(gen, side)
+            if pp then
+                addLine(string.format("  [%s] act=%s | Enabled=%s | parentPart pos=%s | dist=%.1f",
+                    side, tostring(pp.ActionText), tostring(pp.Enabled),
+                    posStr(promptPart), distFromMe(promptPart)), C.G)
+            else
+                addLine("  [" .. side .. "] ไม่พบ ProximityPrompt", C.O)
+            end
+        end
+        addLine("", C.S)
+
+        -- 4 folders
+        addLine("  ── TeleportPositions folders ──", C.B)
+        dumpPosFolder(gen:FindFirstChild("TeleportPositions"),
+            "TeleportPositions (ช่อง 1 - Circle/Original)")
+        dumpPosFolder(gen:FindFirstChild("TeleportPositions_Mirror"),
+            "TeleportPositions_Mirror (ช่อง 2 - Circle/Original)")
+        dumpPosFolder(gen:FindFirstChild("TreadmillTeleportPositions"),
+            "TreadmillTeleportPositions (ช่อง 1 - Treadmill)")
+        dumpPosFolder(gen:FindFirstChild("TreadmillTeleportPositions_Mirror"),
+            "TreadmillTeleportPositions_Mirror (ช่อง 2 - Treadmill)")
+
+        addLine("", C.S)
+
+        -- Treadmill references (ถ้ามี)
+        local tl  = gen:FindFirstChild("TreadmillLightReference")
+        local tlm = gen:FindFirstChild("TreadmillLightReference_Mirror")
+        if tl or tlm then
+            addLine("  ── Treadmill refs ──", C.B)
+            if tl  then addLine("  TreadmillLightReference        = " .. tostring(tl.Value and tl.Value:GetFullName() or "nil"), C.S) end
+            if tlm then addLine("  TreadmillLightReference_Mirror = " .. tostring(tlm.Value and tlm.Value:GetFullName() or "nil"), C.S) end
+        end
+
+        addLine("", C.S)
+    end
+
+    addLine("=== DONE ===", C.T)
+    titleLbl.Text = string.format("DW26 — เจอ DualGen %d ตัว", #duals)
+    copyBox.Text = table.concat(copyLines, "\n")
+end
+
+rescanBtn.MouseButton1Click:Connect(function() task.spawn(scan) end)
+task.spawn(function() task.wait(0.15) scan() end)
+
+warn("[DW26] DualGen Pos Spy v1.0 — ดู structure TeleportPositions ทั้ง 4 folder")
