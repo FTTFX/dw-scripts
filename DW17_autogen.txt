@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.38
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.39
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -32,6 +32,7 @@ local CFG = {
     GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
     HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
     MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
+    MON_WALL_CHECK   = true,  -- v4.39: เช็คกำแพง (raycast) — มอนหลังกำแพงไม่บล็อกเครื่อง (false = คิดวงกลมเหมือนเดิม)
     FLEE_COOLDOWN    = 1,     -- เครื่องที่มอนเคยใกล้ → บล็อกต่ออีกกี่วิ (ลด 3→2: กลับเครื่องเร็วขึ้น, พึ่ง NoDecode ดึงหนีถ้าถูกเห็นจริง)
     -- ถูกมอนเห็น = InGamePlayers.<เรา>.NoDecode (BoolValue) โผล่ → บินหนีจนพ้นสายตา
     SEEN_RISE        = 110,    -- บินขึ้นกี่ studs ตอนถูกเห็น (มองไม่เห็น)
@@ -849,7 +850,21 @@ local GEN = {}
 
 -- มอนอันตรายใกล้ตำแหน่ง pos ไหม (ระยะ "แนวราบ" ตัด Y — บินสูงก็ยังนับว่าใกล้)
 -- ข้าม IGNORE_NAMES = blot/connie/rodger/razzle/dazzle (ตอนหลับ)
-function GEN.monsterNear(pos)
+-- v4.39: raycast เช็คกำแพงขวางระหว่างเครื่องกับมอน (มอนหลังกำแพง = ไม่นับเป็นอันตราย)
+local function wallBetween(pos, mModel, ignoreGen)
+    local mHRP = mModel:FindFirstChild("HumanoidRootPart")
+    if not mHRP then return false end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.IgnoreWater = true
+    params.FilterDescendantsInstances = { mModel, LP.Character, ignoreGen }
+    local from = pos + Vector3.new(0, 3, 0)   -- ยกขึ้นกันชนพื้น/ขอบ
+    local res  = workspace:Raycast(from, mHRP.Position - from, params)
+    return res ~= nil   -- ชนอะไรก่อนถึงมอน = มีกำแพงขวาง
+end
+
+-- checkWall/ignoreGen = ใส่เฉพาะตอนเลือกเครื่อง (pickTarget) — ที่อื่นเรียกแบบเดิม ไม่กระทบ
+function GEN.monsterNear(pos, checkWall, ignoreGen)
     local mf = WORLD.getMonsters()
     if not mf then return false end
     for _, m in pairs(mf:GetChildren()) do
@@ -861,7 +876,12 @@ function GEN.monsterNear(pos)
             for _, kw in pairs(CFG.IGNORE_NAMES) do if n:find(kw) then ignored = true break end end
             if not ignored then
                 local d = mHRP.Position - pos
-                if math.sqrt(d.X*d.X + d.Z*d.Z) <= CFG.MON_NEAR_GEN then return true, m.Name end
+                if math.sqrt(d.X*d.X + d.Z*d.Z) <= CFG.MON_NEAR_GEN then
+                    -- v4.39: เปิด wall-check + มีกำแพงขวาง → ข้ามมอนตัวนี้ (เช็คตัวอื่นต่อ)
+                    if not (checkWall and CFG.MON_WALL_CHECK and wallBetween(pos, m, ignoreGen)) then
+                        return true, m.Name
+                    end
+                end
             end
         end
     end
@@ -1037,7 +1057,7 @@ function GEN.pickTarget(hrpPos)
     local free = {}   -- ทำได้: ไม่มีเพื่อน + ไม่มีมอน + ไม่มีหนวด + ไม่ติด cooldown
     for _, t in pairs(pending) do
         if not t.friendBusy then
-            local near = GEN.monsterNear(t.pos) or SPROUT.nearMachine(t.pos)  -- มอน/หนวด ใกล้เครื่อง = เลี่ยง
+            local near = GEN.monsterNear(t.pos, true, t.gen) or SPROUT.nearMachine(t.pos)  -- v4.39: wall-check เฉพาะตอนเลือกเครื่อง (มอนหลังกำแพงไม่บล็อก)
             if near then STATE.genBlock[t.gen] = now + CFG.FLEE_COOLDOWN end
             local stillBlocked = STATE.genBlock[t.gen] and STATE.genBlock[t.gen] > now
             if not near and not stillBlocked then table.insert(free, t) end
@@ -1629,7 +1649,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.38 [H]"
+titleLbl.Text = "DW Auto Gen v4.39 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1728,6 +1748,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.38 loaded — heal คิดเป็น %เลือด (ลด 1 ใจ=Bandage, ≥2 ใจ=Med) ไม่ใช่ HP ดิบ")
+warn("[DW17] Auto Gen v4.39 loaded — heal คิดเป็น %เลือด (ลด 1 ใจ=Bandage, ≥2 ใจ=Med) ไม่ใช่ HP ดิบ")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
