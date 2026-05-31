@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.23
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.24
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -837,13 +837,15 @@ function GEN.getPending()
     local list = {}
     local igp = workspace:FindFirstChild("InGamePlayers")
     for _, gen in pairs(gf:GetChildren()) do
-        local cv = gen:FindFirstChild("Completed", true)
+        -- v4.24: อ่าน done จาก gen.Stats โดยตรง (spy ยืนยัน path)
+        --   เดิม FindFirstChild("Completed", true) recursive → ไปเจอ Completed ซ้อนตัวอื่น (minigame/anim) = true
+        --   → บอทคิดว่าเครื่องเสร็จทั้งที่ยังไม่เสร็จ → ปล่อยทิ้ง ("หาเครื่องไม่เจอ/ครบแล้ว")
+        local stats = gen:FindFirstChild("Stats")
+        local cv = (stats and stats:FindFirstChild("Completed")) or gen:FindFirstChild("Completed", true)
         local done = cv and cv:IsA("BoolValue") and cv.Value
-        -- v4.8: DualGen ไม่มี Completed BoolValue (มีแต่ PlayerCompletion folder)
-        -- → fallback ผ่าน CurrentAmount >= RequiredAmount กันยืนแช่หลังเครื่องเสร็จ
         if not done then
-            local curV = gen:FindFirstChild("CurrentAmount", true)
-            local reqV = gen:FindFirstChild("RequiredAmount", true)
+            local curV = (stats and stats:FindFirstChild("CurrentAmount")) or gen:FindFirstChild("CurrentAmount", true)
+            local reqV = (stats and stats:FindFirstChild("RequiredAmount")) or gen:FindFirstChild("RequiredAmount", true)
             if curV and reqV and reqV.Value and reqV.Value > 0
                and curV.Value and curV.Value >= reqV.Value then
                 done = true
@@ -1471,7 +1473,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.23 [H]"
+titleLbl.Text = "DW Auto Gen v4.24 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1570,6 +1572,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.23 loaded — debug build (status โชว์ E/spin/d/fpp)")
+warn("[DW17] Auto Gen v4.24 loaded — fix done อ่านจาก gen.Stats (กันคิดว่าเครื่องเสร็จผิด) + debug status")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
