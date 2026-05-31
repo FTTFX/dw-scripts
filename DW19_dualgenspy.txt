@@ -1,0 +1,312 @@
+-- DW19_dualgenspy.txt — Dandy's World DualGen (เครื่องคู่) Spy v2.0
+-- เจาะโครงสร้างเครื่องคู่: slot, ActivePlayer, prompt(+Enabled), TeleportPosition
+-- + WATCH: จับ field ที่เปลี่ยน "สด" ตอนเพื่อนเริ่ม/หยุดทำช่องนึง
+-- วิธีใช้: เข้าใกล้ DualGen → Rescan ดูโครงสร้าง → กด Watch → ให้เพื่อนทำช่อง → ดู ⚡ → Copy ส่ง
+-- เป้าหมาย: รู้ field ที่บอก "ช่องไหนว่าง" เพื่อแก้บั๊ก DW17 ยืนแช่ตอนเพื่อนทำ
+
+local LP = game.Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+
+-- ── 1. Guard ────────────────────────────────────────────────────
+if _G.DW19_CONNS then for _, c in pairs(_G.DW19_CONNS) do pcall(function() c:Disconnect() end) end end
+_G.DW19_CONNS = {}
+local old = pg:FindFirstChild("DW19GUI")
+if old then old:Destroy() end
+
+-- ── 2. GUI ──────────────────────────────────────────────────────
+local gui = Instance.new("ScreenGui")
+gui.Name = "DW19GUI" gui.ResetOnSpawn = false gui.Parent = pg
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 600, 0, 470)
+frame.Position = UDim2.new(0.5, -300, 0.5, -235)
+frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+frame.BorderSizePixel = 0 frame.Active = true frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size = UDim2.new(1, -150, 0, 26) titleLbl.Position = UDim2.new(0, 10, 0, 2)
+titleLbl.BackgroundTransparency = 1 titleLbl.TextColor3 = Color3.fromRGB(120, 200, 255)
+titleLbl.Text = "DW DualGen Spy v2.0"
+titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = frame
+
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(0, 70, 0, 22) copyBtn.Position = UDim2.new(1, -148, 0, 3)
+copyBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 50) copyBtn.TextColor3 = Color3.new(1,1,1)
+copyBtn.Text = "Copy" copyBtn.Font = Enum.Font.Code copyBtn.TextSize = 12 copyBtn.BorderSizePixel = 0
+copyBtn.Parent = frame
+Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 4)
+
+local rescanBtn = Instance.new("TextButton")
+rescanBtn.Size = UDim2.new(0, 70, 0, 22) rescanBtn.Position = UDim2.new(1, -148, 0, 27)
+rescanBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 110) rescanBtn.TextColor3 = Color3.new(1,1,1)
+rescanBtn.Text = "Rescan" rescanBtn.Font = Enum.Font.Code rescanBtn.TextSize = 11 rescanBtn.BorderSizePixel = 0
+rescanBtn.Parent = frame
+Instance.new("UICorner", rescanBtn).CornerRadius = UDim.new(0, 4)
+
+local watchBtn = Instance.new("TextButton")
+watchBtn.Size = UDim2.new(0, 70, 0, 22) watchBtn.Position = UDim2.new(1, -148, 0, 51)
+watchBtn.BackgroundColor3 = Color3.fromRGB(90, 60, 20) watchBtn.TextColor3 = Color3.new(1,1,1)
+watchBtn.Text = "Watch" watchBtn.Font = Enum.Font.Code watchBtn.TextSize = 11 watchBtn.BorderSizePixel = 0
+watchBtn.Parent = frame
+Instance.new("UICorner", watchBtn).CornerRadius = UDim.new(0, 4)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 60, 0, 22) closeBtn.Position = UDim2.new(1, -64, 0, 3)
+closeBtn.BackgroundColor3 = Color3.fromRGB(120, 20, 20) closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.Text = "ปิด" closeBtn.Font = Enum.Font.Code closeBtn.TextSize = 12 closeBtn.BorderSizePixel = 0
+closeBtn.Parent = frame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function()
+    for _, c in pairs(_G.DW19_CONNS) do pcall(function() c:Disconnect() end) end
+    gui:Destroy()
+end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -8, 1, -34) scroll.Position = UDim2.new(0, 4, 0, 30)
+scroll.BackgroundColor3 = Color3.fromRGB(8, 8, 14) scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 5 scroll.CanvasSize = UDim2.new(0,0,0,0) scroll.Parent = frame
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 4)
+local pad = Instance.new("UIPadding") pad.PaddingLeft = UDim.new(0, 6) pad.Parent = scroll
+local layout = Instance.new("UIListLayout") layout.SortOrder = Enum.SortOrder.LayoutOrder layout.Parent = scroll
+
+-- TextBox fallback (executor ไม่รองรับ setclipboard)
+local copyBox = Instance.new("TextBox")
+copyBox.Size = UDim2.new(1, -8, 1, -34) copyBox.Position = UDim2.new(0, 4, 0, 30)
+copyBox.BackgroundColor3 = Color3.fromRGB(8, 8, 14) copyBox.TextColor3 = Color3.fromRGB(180,255,180)
+copyBox.Font = Enum.Font.Code copyBox.TextSize = 11
+copyBox.TextXAlignment = Enum.TextXAlignment.Left copyBox.TextYAlignment = Enum.TextYAlignment.Top
+copyBox.MultiLine = true copyBox.ClearTextOnFocus = false copyBox.Text = ""
+copyBox.BorderSizePixel = 0 copyBox.Visible = false copyBox.Parent = frame
+Instance.new("UICorner", copyBox).CornerRadius = UDim.new(0, 4)
+local padBox = Instance.new("UIPadding") padBox.PaddingLeft = UDim.new(0, 6)
+padBox.PaddingTop = UDim.new(0, 4) padBox.Parent = copyBox
+
+-- ── 3. Helper ───────────────────────────────────────────────────
+local copyLines, order = {}, 0
+local C = {
+    Y = Color3.fromRGB(255,210,0),  G = Color3.fromRGB(80,255,120),
+    B = Color3.fromRGB(140,160,255), O = Color3.fromRGB(255,160,50),
+    W = Color3.fromRGB(210,210,210), S = Color3.fromRGB(140,140,140),
+    R = Color3.fromRGB(255,90,90),
+}
+local function addLine(txt, col)
+    order += 1
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(1, -12, 0, 15) l.BackgroundTransparency = 1
+    l.Font = Enum.Font.Code l.TextSize = 11
+    l.TextXAlignment = Enum.TextXAlignment.Left l.TextTruncate = Enum.TextTruncate.AtEnd
+    l.TextColor3 = col or C.W l.Text = txt l.LayoutOrder = order l.Parent = scroll
+    table.insert(copyLines, txt)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+end
+
+copyBtn.MouseButton1Click:Connect(function()
+    local full = table.concat(copyLines, "\n")
+    local clip = setclipboard or toclipboard or write_clipboard or (getgenv and getgenv().setclipboard)
+    local ok = clip and pcall(clip, full)
+    if ok then
+        copyBtn.Text = "Copied!"
+        task.delay(2, function() if copyBtn.Parent then copyBtn.Text = "Copy" end end)
+    else
+        copyBox.Visible = true copyBox.Text = full
+        copyBox:CaptureFocus() copyBox.SelectionStart = 1 copyBox.CursorPosition = #full + 1
+        copyBtn.Text = "Ctrl+C"
+    end
+end)
+
+-- หา Generators folder (dynamic — ชื่อแมพเปลี่ยน)
+local function getGenFolder()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, m in pairs(cr:GetChildren()) do
+            local g = m:FindFirstChild("Generators")
+            if g then return g end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Generators" then return obj end
+    end
+    return nil
+end
+
+-- ── 4. Scan ─────────────────────────────────────────────────────
+local function scan()
+    -- ล้างของเก่า
+    for _, ch in pairs(scroll:GetChildren()) do if ch:IsA("TextLabel") then ch:Destroy() end end
+    copyLines = {} order = 0
+
+    addLine("=== DW19 DUALGEN SPY v1.0 ===", C.Y)
+    local gf = getGenFolder()
+    if not gf then addLine("❌ หา Generators ไม่เจอ", C.R) return end
+    addLine("Generators @ " .. gf:GetFullName(), C.S)
+    addLine("", C.S)
+
+    local dualCount = 0
+    for _, gen in pairs(gf:GetChildren()) do
+        local fam = gen:GetAttribute("MachineFamily")
+        local isDual = (fam == "DUAL") or gen.Name:lower():find("dual")
+            or gen:FindFirstChild("TeleportPositions_Mirror", true) ~= nil
+        if isDual then
+            dualCount += 1
+            addLine("════ DUAL: " .. gen.Name .. " ════", C.Y)
+            -- attributes
+            for k, v in pairs(gen:GetAttributes()) do
+                addLine("  @attr " .. k .. " = " .. tostring(v),
+                    (tostring(k):lower():find("slot") or tostring(k):lower():find("active")
+                     or tostring(k):lower():find("family")) and C.G or C.S)
+            end
+            -- Values (children ที่เป็น Value)
+            for _, ch in pairs(gen:GetChildren()) do
+                if ch:IsA("ValueBase") then
+                    local val = ch.Value
+                    if ch:IsA("ObjectValue") then val = ch.Value and ch.Value:GetFullName() or "nil" end
+                    addLine("  [val] " .. ch.Name .. " [" .. ch.ClassName .. "] = " .. tostring(val),
+                        (ch.Name:lower():find("active") or ch.Name:lower():find("slot")
+                         or ch.Name:lower():find("player")) and C.G or C.W)
+                end
+            end
+            -- ProximityPrompts (+ Enabled = ช่องว่าง/occupied?)
+            addLine("  -- Prompts --", C.B)
+            for _, d in pairs(gen:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    addLine("  [Prompt] " .. d:GetFullName():gsub(gen:GetFullName(), "..."), C.B)
+                    addLine("     Enabled=" .. tostring(d.Enabled)
+                        .. " Action=" .. tostring(d.ActionText)
+                        .. " Hold=" .. tostring(d.HoldDuration),
+                        d.Enabled and C.G or C.O)
+                end
+            end
+            -- TeleportPositions (ทุกช่อง)
+            addLine("  -- TeleportPositions --", C.B)
+            for _, d in pairs(gen:GetDescendants()) do
+                if d:IsA("BasePart") and (d.Name:find("TeleportPosition")
+                   or (d.Parent and tostring(d.Parent.Name):find("TeleportPositions"))) then
+                    addLine("  [TP] " .. d:GetFullName():gsub(gen:GetFullName(), "...")
+                        .. " pos(" .. math.floor(d.Position.X) .. ","
+                        .. math.floor(d.Position.Y) .. "," .. math.floor(d.Position.Z) .. ")", C.W)
+                end
+            end
+            -- per-player progress values (ใครทำช่องไหน)
+            addLine("  -- progress ต่อคน --", C.B)
+            for _, ch in pairs(gen:GetChildren()) do
+                if ch:IsA("NumberValue") and ch.Name ~= "CurrentAmount"
+                   and ch.Name ~= "RequiredAmount" and ch.Name ~= "RewardAmount" then
+                    addLine("  " .. ch.Name .. " = " .. tostring(ch.Value), C.O)
+                end
+            end
+            addLine("", C.S)
+        end
+    end
+    if dualCount == 0 then
+        addLine("⚠️ ไม่เจอ DualGen ในชั้นนี้ — ลองชั้นที่มีเครื่องคู่ แล้วกด Rescan", C.O)
+    else
+        addLine("=== เจอ DualGen " .. dualCount .. " ตัว ===", C.Y)
+    end
+    copyBox.Text = table.concat(copyLines, "\n")
+    titleLbl.Text = "DW DualGen Spy v2.0 — เจอ " .. dualCount
+end
+
+rescanBtn.MouseButton1Click:Connect(function() task.spawn(scan) end)
+task.spawn(function() task.wait(0.1) scan() end)
+
+-- ════════════════════════════════════════════════════════════════
+-- 5. LIVE WATCH — จับการเปลี่ยนแปลงสดของเครื่องคู่ที่ใกล้สุด
+--    เป้าหมาย: ตอนเพื่อนเริ่ม/หยุดทำช่องนึง → field ไหนเปลี่ยน?
+-- ════════════════════════════════════════════════════════════════
+local watchConns = {}
+local watching   = false
+local promptState = {}   -- [prompt] = last Enabled
+
+local function stopWatch()
+    for _, c in pairs(watchConns) do pcall(function() c:Disconnect() end) end
+    watchConns = {} promptState = {}
+    watching = false
+    watchBtn.Text = "Watch" watchBtn.BackgroundColor3 = Color3.fromRGB(90, 60, 20)
+end
+
+local function isDualGen(gen)
+    local fam = gen:GetAttribute("MachineFamily")
+    return (fam == "DUAL") or gen.Name:lower():find("dual")
+        or gen:FindFirstChild("TeleportPositions_Mirror", true) ~= nil
+end
+
+local function getNearestDual()
+    local gf = getGenFolder() ; if not gf then return nil end
+    local ch = LP.Character ; local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    local hp = hrp and hrp.Position
+    local best, bd = nil, math.huge
+    for _, gen in pairs(gf:GetChildren()) do
+        if isDualGen(gen) then
+            local ok, pos = pcall(function() return gen:GetPivot().Position end)
+            local d = (ok and hp) and (hp - pos).Magnitude or 0
+            if d < bd then bd = d best = gen end
+        end
+    end
+    return best
+end
+
+local function ts() return string.format("%.1f", tick() % 1000) end
+
+local function startWatch()
+    local gen = getNearestDual()
+    if not gen then addLine("⚠️ ไม่เจอ DualGen ใกล้ตัว", C.O) return end
+    watching = true
+    watchBtn.Text = "Stop" watchBtn.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
+    addLine("", C.S)
+    addLine("════ 👁 WATCH: " .. gen.Name .. " ════", C.Y)
+    addLine("→ ให้เพื่อนเริ่ม/หยุดทำช่องนึง แล้วดูบรรทัด ⚡ ที่ขึ้น", C.G)
+
+    -- attribute changes
+    table.insert(watchConns, gen.AttributeChanged:Connect(function(name)
+        addLine("⚡[" .. ts() .. "] @attr " .. name .. " → " .. tostring(gen:GetAttribute(name)), C.G)
+    end))
+
+    -- ValueBase children changes (Slot/Active/ActivePlayer/progress)
+    for _, vb in pairs(gen:GetDescendants()) do
+        if vb:IsA("ValueBase") then
+            table.insert(watchConns, vb.Changed:Connect(function(v)
+                if vb:IsA("ObjectValue") then v = v and v:GetFullName() or "nil" end
+                addLine("⚡[" .. ts() .. "] [val] " .. vb.Name .. " → " .. tostring(v), C.O)
+            end))
+        end
+    end
+    -- child added/removed (เผื่อ slot ทำ object โผล่/หาย)
+    table.insert(watchConns, gen.DescendantAdded:Connect(function(d)
+        addLine("⚡[" .. ts() .. "] +NEW [" .. d.ClassName .. "] " .. d.Name, C.B)
+        if d:IsA("ValueBase") then
+            table.insert(watchConns, d.Changed:Connect(function(v)
+                addLine("⚡[" .. ts() .. "] [val] " .. d.Name .. " → " .. tostring(v), C.O)
+            end))
+        end
+    end))
+    table.insert(watchConns, gen.DescendantRemoving:Connect(function(d)
+        addLine("⚡[" .. ts() .. "] -DEL [" .. d.ClassName .. "] " .. d.Name, C.R)
+    end))
+
+    -- poll prompt.Enabled (มัก toggle ตอนช่องถูกจอง)
+    for _, d in pairs(gen:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then promptState[d] = d.Enabled end
+    end
+    table.insert(watchConns, game:GetService("RunService").Heartbeat:Connect(function()
+        if not watching then return end
+        for p, was in pairs(promptState) do
+            if p and p.Parent then
+                if p.Enabled ~= was then
+                    promptState[p] = p.Enabled
+                    addLine("⚡[" .. ts() .. "] Prompt.Enabled " .. p:GetFullName():gsub(gen:GetFullName(), "...")
+                        .. " → " .. tostring(p.Enabled), p.Enabled and C.G or C.R)
+                end
+            end
+        end
+    end))
+    for _, c in pairs(watchConns) do table.insert(_G.DW19_CONNS, c) end
+end
+
+watchBtn.MouseButton1Click:Connect(function()
+    if watching then stopWatch() else startWatch() end
+end)
+
+warn("[DW19] DualGen Spy v2.0 — Rescan/Copy + Watch (จับ field ที่เปลี่ยนตอนเพื่อนทำช่อง)")
