@@ -189,6 +189,17 @@ local function scan()
                         .. math.floor(d.Position.Y) .. "," .. math.floor(d.Position.Z) .. ")", C.W)
                 end
             end
+            -- done fields ทุกตัว (recursive) — หา Completed/CurrentAmount/RequiredAmount ซ้อน
+            addLine("  -- done fields (recursive) --", C.B)
+            for _, d in pairs(gen:GetDescendants()) do
+                local nm = d.Name
+                if d:IsA("ValueBase") and (nm == "Completed" or nm == "CurrentAmount"
+                   or nm == "RequiredAmount") then
+                    addLine("  [" .. nm .. "] " .. d:GetFullName():gsub(gen:GetFullName(), "...")
+                        .. " = " .. tostring(d.Value),
+                        (nm == "Completed" and d.Value == true) and C.R or C.O)
+                end
+            end
             -- per-player progress values (ใครทำช่องไหน)
             addLine("  -- progress ต่อคน --", C.B)
             for _, ch in pairs(gen:GetChildren()) do
