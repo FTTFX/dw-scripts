@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.28
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.29
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -234,6 +234,36 @@ end
 function MOVE.lockAt(cf)
     STATE.lockedCFrame = cf
     MOVE.pin(nil, cf)
+end
+
+-- v4.29: ปลดล็อกตัวที่ "ติดเครื่อง" (seat/weld/network) — เรียกตอนวาปหนีแล้วตัวจริงไม่ขึ้นตาม
+--   sit=false + jumping = หลุด seat/treadmill | ปลด weld ที่เชื่อม HRP กับ part นอกตัวละคร (เครื่อง)
+function MOVE.unstick(char, hrp)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        pcall(function() hum.Sit = false end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Jumping) end)
+    end
+    -- ปลด weld/joint ที่ดึงเราไว้กับเครื่อง (Part0/Part1 ข้างนึงอยู่นอกตัวละคร = ไม่ใช่ข้อต่อร่างกาย)
+    for _, d in pairs(char:GetDescendants()) do
+        if d:IsA("Weld") or d:IsA("WeldConstraint") then
+            local p0, p1 = d.Part0, d.Part1
+            if p0 and p1 and (p0:IsDescendantOf(char) ~= p1:IsDescendantOf(char)) then
+                pcall(function() d:Destroy() end)
+            end
+        end
+    end
+    pcall(function()
+        local z = Vector3.new(0, 0, 0)
+        hrp.AssemblyLinearVelocity  = z
+        hrp.AssemblyAngularVelocity = z
+    end)
+end
+
+-- v4.29: รีเช็ค "วาปขึ้นจริงไหม" — true = ตัวยังต่ำกว่าเป้า (ยังไม่ขึ้น/ติดเครื่อง)
+--   (เช็ค server decode แยกใน loop เพราะ GEN ประกาศทีหลัง MOVE)
+function MOVE.warpStuck(hrp, cf)
+    return hrp.Position.Y < cf.Position.Y - CFG.SEEN_VERIFY_DIST
 end
 
 -- ════════════════════════════════════════════════════════════════
@@ -1337,12 +1367,15 @@ local conn = RS.Heartbeat:Connect(function()
             STATE.seenCF     = CFrame.new(hrp.Position + Vector3.new(0, CFG.SEEN_RISE, 0))
             STATE.seenWarpAt = tick()
         else
-            -- ดับเบิลเช็ค: เฟรมก่อน snap ไปแล้ว แต่ยังห่างเป้า = วาปไม่ติด/ค้าง → ดับเบิลวาป
-            local off = (hrp.Position - STATE.seenCF.Position).Magnitude
-            if off > CFG.SEEN_VERIFY_DIST then
-                MOVE.pin(hrp, STATE.seenCF)        -- วาปซ้ำครั้งที่ 1 (กันค้าง) + zero vel
-                MOVE.pin(hrp, STATE.seenCF)        -- ดับเบิลวาป (บาง executor ต้อง set ซ้ำ)
-                warn("[DW17] วาปไม่ติด (ห่าง " .. math.floor(off) .. ") → ดับเบิลวาป")
+            -- v4.29: รีเช็ค "วาปขึ้นจริงไหม" — ตัวยังต่ำ (ไม่ขึ้น) หรือ server ยัง decode (ติดเครื่อง) → ปลดล็อก+วาปซ้ำ
+            local stuck = MOVE.warpStuck(hrp, STATE.seenCF) or (GEN.serverDecoding() ~= nil)
+            if stuck then
+                MOVE.unstick(char, hrp)            -- ปลด seat/weld/jump (หลุดจากเครื่อง)
+                GEN.forceStopDecode()              -- ย้ำหยุดสกัด (server lock)
+                MOVE.pin(hrp, STATE.seenCF)        -- วาปซ้ำ + zero vel
+                MOVE.pin(hrp, STATE.seenCF)
+                STATE.stuckWarp = (STATE.stuckWarp or 0) + 1
+                warn("[DW17] ติดเครื่อง/วาปไม่ขึ้น (" .. STATE.stuckWarp .. ") → unstick + วาปซ้ำ")
             end
             -- ยังถูกเห็นเกิน SEEN_RECHECK วิ → สูงไม่พอ/มอนยังตาม → ยกขึ้นอีกชั้น
             if seenNow and tick() - (STATE.seenWarpAt or 0) >= CFG.SEEN_RECHECK then
@@ -1501,7 +1534,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.28 [H]"
+titleLbl.Text = "DW Auto Gen v4.29 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1600,6 +1633,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.28 loaded — บินหนีค้างจนมอนไปไกล (ไม่ลงโดนตีซ้ำ) + เก็บไอเทมแบบ keyword")
+warn("[DW17] Auto Gen v4.29 loaded — รีเช็ควาป: ตัวไม่ขึ้น/server ยัง decode → unstick (ปลด seat/weld/jump) + วาปซ้ำ")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
