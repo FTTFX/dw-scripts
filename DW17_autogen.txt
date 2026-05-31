@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.21
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.22
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -1030,15 +1030,24 @@ function GEN.work(hrp, target)
     end
 
     STATE.curGenName = target.gen.Name
-    MOVE.applyNoclip(LP.Character)
-    -- ยืนตรงจุด prompt (standPos) — ใกล้พอให้ E สกัด ทำงาน
-    -- v4.13: ทั้งเดี่ยว + คู่ ใช้ Y+3 (HRP จมพื้น → prompt ไม่ติด)
-    local standOff = CFG.GEN_STAND_OFFSET
-    MOVE.lockAt(CFrame.new((target.standPos or target.part.Position) + standOff))
     if curVal > STATE.workLastAmt + 0.01 then
         STATE.workLastAmt    = curVal
         STATE.workLastChange = tick()
     end
+
+    -- v4.22: ยังไม่ถึงจุดยืน → วาปไป (noclip+lock เพื่อทะลุ/กันตก)
+    local standPos = target.standPos or target.part.Position
+    if (hrp.Position - standPos).Magnitude > 12 then
+        MOVE.applyNoclip(LP.Character)
+        MOVE.lockAt(CFrame.new(standPos + CFG.GEN_STAND_OFFSET))
+        STATE.workStarted = false        -- ยังไม่เริ่มจนกว่าจะถึง
+        status("➡️ ไปเครื่อง " .. target.gen.Name .. (target.slot and (" [ช่อง"..target.slot.."]") or ""))
+        return
+    end
+    -- v4.22: ถึงแล้ว → ปลดบิน+เลิกล็อก ให้ "เกมดูดเราเข้าเครื่อง" (seat) เอง
+    --   เดิม: ล็อก CFrame+noclip ทุกเฟรม → สู้กับการ seat ของเกม → เริ่มสกัดไม่ติด (ยืนลอยข้างเครื่อง)
+    if STATE.lockedCFrame ~= nil then MOVE.removeFly() end
+    STATE.lockedCFrame = nil
 
     local stalled = tick() - STATE.workLastChange > CFG.GEN_STALL
     local hd = target.prompt.HoldDuration or 0
@@ -1382,9 +1391,11 @@ local conn = RS.Heartbeat:Connect(function()
 
     -- throttle gen logic
     if tick() - STATE.lastTick < CFG.LOOP_INTERVAL then
-        -- ยัง lock ตำแหน่งทุกเฟรม (กันตก)
-        MOVE.applyNoclip(char)
-        if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end
+        -- v4.22: lock เฉพาะตอนมีเป้า (บิน/หนี) — ตอนนั่งทำเครื่อง (lockedCFrame=nil) ปล่อยให้เกม seat เรา
+        if STATE.lockedCFrame then
+            MOVE.applyNoclip(char)
+            MOVE.pin(hrp, STATE.lockedCFrame)
+        end
         return
     end
     STATE.lastTick = tick()
@@ -1454,7 +1465,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.21 [H]"
+titleLbl.Text = "DW Auto Gen v4.22 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1553,6 +1564,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.21 loaded — เครื่องคู่: gate ด้วย prompt.Enabled + standPos ตามชนิด + SlotNSpinning (กดติด/ไม่ยืนเปล่า)")
+warn("[DW17] Auto Gen v4.22 loaded — ถึงเครื่องแล้วปลดบิน/เลิกล็อก ให้เกม seat (เริ่มสกัดติด ไม่ยืนลอยข้างเครื่อง)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
