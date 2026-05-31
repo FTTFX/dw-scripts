@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.30
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.31
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -651,15 +651,19 @@ function COLLECT.inventoryFull()
     local entry = igp and igp:FindFirstChild(LP.Name)
     local inv = entry and entry:FindFirstChild("Inventory")
     if not inv then return false end   -- หาไม่เจอ = ไม่บล็อก (กันพลาด)
-    local total, filled = 0, 0
+    -- v4.31: match ชื่อ "Slot<เลข>" เป๊ะ (กันไปนับ MaxSlots/EquippedSlot) + เจอช่องว่าง 1 ช่อง = ยังไม่เต็ม
+    --   ช่องว่างอาจเป็น "" / none / nil (ObjectValue ว่าง) → ถือว่าว่าง
+    local total = 0
     for _, s in pairs(inv:GetChildren()) do
-        if s:IsA("ValueBase") and s.Name:find("Slot") then
+        if s:IsA("ValueBase") and s.Name:match("^Slot%d+$") then
             total = total + 1
-            local v = tostring(s.Value):lower()
-            if v ~= "" and v ~= "none" then filled = filled + 1 end
+            local v = tostring(s.Value):lower():gsub("%s", "")
+            if v == "" or v == "none" or v == "nil" or v == "false" then
+                return false   -- เจอช่องว่าง → ยังไม่เต็ม → เก็บได้
+            end
         end
     end
-    return total > 0 and filled >= total
+    return total > 0   -- มีช่อง + ไม่เจอช่องว่างเลย = เต็มจริง
 end
 
 function COLLECT.run(onDone, names, monDist, checkFull)
@@ -1558,7 +1562,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.30 [H]"
+titleLbl.Text = "DW Auto Gen v4.31 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1657,6 +1661,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.30 loaded — เช็คกระเป๋าเต็ม → ข้ามเก็บ START item (Research ยังเก็บได้)")
+warn("[DW17] Auto Gen v4.31 loaded — fix เช็คกระเป๋าเต็ม (เจอช่องว่าง=ยังไม่เต็ม, match Slot<เลข> เป๊ะ)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
