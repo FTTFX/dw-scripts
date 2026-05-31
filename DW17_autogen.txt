@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.33
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.34
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -706,10 +706,22 @@ function COLLECT.run(onDone, names, monDist, checkFull)
                             if COLLECT_fleeing() or COLLECT.monsterNear(e.part.Position, monDist) then
                                 status("⚠️ ยกเลิก " .. e.item.Name .. " (มอนเข้ามา/ถูกเห็น)")
                             else
-                                pcall(function() fireproximityprompt(e.prompt) end)
-                                task.wait(0.25)
-                                total += 1
-                                status("🎒 (" .. total .. ") " .. e.item.Name)
+                                -- v4.34: ยิง prompt + ส่ง HoldDuration + verify ของหายจริง (retry สูงสุด 4 ครั้ง)
+                                --   เดิมยิงครั้งเดียว ไม่รอ → "ของไม่เข้าตัว" (prompt hold / ยิงไม่ติด)
+                                local hd = e.prompt.HoldDuration or 0
+                                for _ = 1, 4 do
+                                    if not e.item.Parent then break end
+                                    if COLLECT_fleeing() then break end
+                                    if STATE.lockedCFrame then MOVE.pin(hrp, STATE.lockedCFrame) end  -- ตรึงที่ item
+                                    pcall(function() fireproximityprompt(e.prompt, hd) end)
+                                    task.wait(0.2)
+                                end
+                                if not e.item.Parent then
+                                    total += 1
+                                    status("🎒 (" .. total .. ") " .. e.item.Name)
+                                else
+                                    status("⚠️ เก็บไม่ติด " .. e.item.Name)
+                                end
                             end
                         end
                     end
@@ -1568,7 +1580,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.33 [H]"
+titleLbl.Text = "DW Auto Gen v4.34 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1667,6 +1679,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.33 loaded — fix collectBusy ไม่ reset ตอนเปลี่ยนชั้น (start-collect ถูกข้าม) + debug item/full")
+warn("[DW17] Auto Gen v4.34 loaded — เก็บ item: ยิง prompt+HoldDuration + verify ของหายจริง retry (กันของไม่เข้าตัว)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
