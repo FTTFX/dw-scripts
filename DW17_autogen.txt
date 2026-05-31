@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.22
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.23
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -1070,11 +1070,17 @@ function GEN.work(hrp, target)
 
     local slotTag = target.slot and (" [ช่อง" .. target.slot .. "]") or ""
     local tag = refire and " (re-สกัด)" or (stalled and " (รอ skillcheck)" or "")
+    -- v4.23: debug — E=prompt enabled, spin=ช่องเราหมุน, d=ระยะถึงจุดยืน, fpp=มี fireproximityprompt
+    local dbg = string.format(" | E:%s spin:%s d:%d fpp:%s",
+        (target.prompt and target.prompt.Enabled) and "on" or "off",
+        decodingThis and "Y" or "N",
+        math.floor((hrp.Position - standPos).Magnitude),
+        (fireproximityprompt ~= nil) and "y" or "n")
     if cur and req then
         status("⚙️ " .. target.gen.Name .. slotTag .. " " .. math.floor(curVal) .. "/" .. math.floor(req.Value)
-            .. " | skill:" .. STATE.skillHits .. tag)
+            .. " | skill:" .. STATE.skillHits .. tag .. dbg)
     else
-        status("⚙️ ทำ " .. target.gen.Name .. slotTag .. " | skill:" .. STATE.skillHits)
+        status("⚙️ ทำ " .. target.gen.Name .. slotTag .. " | skill:" .. STATE.skillHits .. dbg)
     end
 end
 
@@ -1465,7 +1471,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.22 [H]"
+titleLbl.Text = "DW Auto Gen v4.23 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1564,6 +1570,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.22 loaded — ถึงเครื่องแล้วปลดบิน/เลิกล็อก ให้เกม seat (เริ่มสกัดติด ไม่ยืนลอยข้างเครื่อง)")
+warn("[DW17] Auto Gen v4.23 loaded — debug build (status โชว์ E/spin/d/fpp)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
