@@ -1140,13 +1140,16 @@ function GEN.work(hrp, target)
         return
     end
     -- ── ขึ้นเครื่องแล้วยัง (mounted)? ──
-    -- v4.21/4.25: dual ใช้ SlotNSpinning หรือ player.Decoding (treadmill set Decoding แต่ Slot ไม่ขึ้น)
+    -- v4.38: เช็คให้แม่น — Decoding ต้องชี้ "เครื่องนี้" (หรือ part ในเครื่องนี้) ไม่ใช่ ~=nil หลวมๆ
+    --   (เดิม dual ใช้ ~=nil → decode เครื่องไหนก็ true → คิดว่า mounted ผิด → ไม่ยิงทั้งที่ยังไม่ขึ้น)
+    local dec = GEN.serverDecoding()
+    local onThisGen = (dec ~= nil) and (dec == target.gen or dec:IsDescendantOf(target.gen))
     local decodingThis
     if target.slot then
         decodingThis = (target.gen:GetAttribute("Slot" .. target.slot .. "Spinning") == true)
-            or (GEN.serverDecoding() ~= nil)
+            or onThisGen
     else
-        decodingThis = GEN.serverDecoding() == target.gen
+        decodingThis = onThisGen
     end
 
     -- v4.37: ทิ้งเครื่องไว → 2 กรณี: (A) ช่องถูกจองโดยตัวอื่นจริง = ทิ้งเร็ว (grace 0.4s) | (B) ขึ้นไม่ติดนานเกิน = fallback
