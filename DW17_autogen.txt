@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.35
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.36
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -27,6 +27,7 @@ local CFG = {
     LOOP_INTERVAL    = 0.08,  -- throttle logic ทุกกี่วิ
     -- gen work — DW16 skillcheck = แกนหลักในการเติม | prompt แค่ "เริ่มสกัด"
     GEN_STALL        = 1.5,   -- ถ้า CurrentAmount ไม่ขึ้นเกินนี้ (วิ) → fire prompt ซ้ำ (re-เริ่มสกัด)
+    MOUNT_TIMEOUT    = 2.0,   -- v4.36: ถึงเครื่องแล้วขึ้นไม่ติดเกินนี้ (วิ) = มีบอทตัวอื่นจอง → ทิ้งไปตัวอื่น (กันชน/ยืนรอ)
     GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
     HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
     MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
@@ -306,19 +307,29 @@ end
 
 function ELEV.warp()
     local cf = ELEV.getCFrame()
-    if cf then
-        local char = LP.Character
-        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not cf then status("⚠️ หา Elevator ไม่เจอ") return false end
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    -- v4.36: ปลดล็อก/seat + tap E (เผื่อยังติดเครื่องเก่า = วาปไม่สติก = "ไม่ตรง") + วาป verify
+    pcall(function()   -- tap E ปลด decode ค้างจากเครื่องล่าสุด
+        VIM:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+        VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+    MOVE.unstick(char, hrp)
+    MOVE.applyNoclip(char)
+    MOVE.pin(hrp, cf)
+    -- ตัวยังไม่ถึงลิฟต์ (วาปไม่ติด) → unstick + วาปซ้ำ
+    if (hrp.Position - cf.Position).Magnitude > CFG.SEEN_VERIFY_DIST then
+        MOVE.unstick(char, hrp)
         MOVE.pin(hrp, cf)
-        MOVE.removeFly()
-        STATE.warpedToElev = true
-        STATE.lockedCFrame = nil
-        status("✅ วาปลิฟต์!")
-        warn("[DW17] วาปลิฟต์!")
-        return true
+        MOVE.pin(hrp, cf)
     end
-    status("⚠️ หา Elevator ไม่เจอ")
-    return false
+    STATE.warpedToElev = true
+    STATE.elevCF       = cf       -- v4.36: เก็บไว้ตรึงตอนรอลิฟต์ (กันดริฟต์ออก)
+    STATE.lockedCFrame = nil
+    status("✅ วาปลิฟต์!")
+    return true
 end
 
 -- ════════════════════════════════════════════════════════════════
@@ -1109,6 +1120,7 @@ function GEN.work(hrp, target)
         STATE.workLastAmt    = curVal
         STATE.workLastChange = tick()
         STATE.workStarted    = false
+        STATE.mountTryStart  = nil   -- v4.36: reset ตัวจับเวลา mount (เครื่องใหม่)
     end
 
     STATE.curGenName = target.gen.Name
@@ -1134,6 +1146,22 @@ function GEN.work(hrp, target)
             or (GEN.serverDecoding() ~= nil)
     else
         decodingThis = GEN.serverDecoding() == target.gen
+    end
+
+    -- v4.36: ขึ้นไม่ติดเร็วๆ (บอทตัวอื่นจองไปแล้ว/ชนกัน) → ทิ้งเครื่องนี้ ไปตัวอื่นทันที (กันยืนรอ/ชน)
+    if decodingThis then
+        STATE.mountTryStart = nil
+    else
+        STATE.mountTryStart = STATE.mountTryStart or tick()
+        if tick() - STATE.mountTryStart > CFG.MOUNT_TIMEOUT then
+            STATE.genBlock[target.gen] = tick() + CFG.FLEE_COOLDOWN   -- บล็อกสั้นๆ กันรีบวกกลับ
+            STATE.workGenRef    = nil
+            STATE.workSlot      = nil
+            STATE.mountTryStart = nil
+            GEN.releaseHold()
+            status("↪ ขึ้นไม่ติด/ไม่ว่าง → ไปเครื่องอื่น")
+            return
+        end
     end
 
     -- v4.22: ถึงแล้ว → ปลดบิน+เลิกล็อก ให้ "เกมดูดเราเข้าเครื่อง" (seat) เอง (ไม่งั้นล็อกทุกเฟรมสู้กับ seat)
@@ -1271,6 +1299,8 @@ local FLOOR = {}
 
 function FLOOR.reset()
     STATE.warpedToElev    = false
+    STATE.elevCF          = nil   -- v4.36
+    STATE.mountTryStart   = nil   -- v4.36
     STATE.lockedCFrame    = nil
     STATE.cachedMonsters  = nil
     STATE.cachedGenerators = nil
@@ -1463,7 +1493,13 @@ local conn = RS.Heartbeat:Connect(function()
                     end
                 end
             end
-            MOVE.removeFly()
+            -- v4.36: ถ้าดริฟต์ออกจากลิฟต์ (วาปไม่ติด/ตัวไหล) → ตรึงกลับทันที (กันไม่เข้าลิฟต์)
+            if STATE.elevCF and (hrp.Position - STATE.elevCF.Position).Magnitude > CFG.SEEN_VERIFY_DIST then
+                MOVE.applyNoclip(char)
+                MOVE.pin(hrp, STATE.elevCF)
+            else
+                MOVE.removeFly()
+            end
             return
         end
     end
@@ -1586,7 +1622,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.35 [H]"
+titleLbl.Text = "DW Auto Gen v4.36 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1685,6 +1721,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.35 loaded — heal คิดเป็น %เลือด (ลด 1 ใจ=Bandage, ≥2 ใจ=Med) ไม่ใช่ HP ดิบ")
+warn("[DW17] Auto Gen v4.36 loaded — multi-bot: mount timeout 2s ทิ้งไปตัวอื่น (กันชน) + ELEV unstick/verify (วาปลิฟต์แม่น)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
