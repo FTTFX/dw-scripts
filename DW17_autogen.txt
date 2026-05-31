@@ -63,7 +63,7 @@ local CFG = {
     SPROUT_TENDRIL_KW = { "sprouttendril", "tendril" },
     SPROUT_SAFE_DIST  = 22,   -- ห่างหนวด Sprout อย่างน้อยกี่ studs (จูนได้)
     -- elevator + collect (จาก DW02)
-    ELEV_WARP_Y      = 5,     -- วาปสูงเหนือ ElevatorPrompt (กันมุดพื้น)
+    ELEV_WARP_Y      = 1,     -- วาปสูงเหนือ ElevatorPrompt (กันมุดพื้น)
     ELEV_REWARP      = { 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 },  -- rewarp ตาม PanicTimer (กันหลุด)
     DOUBLE_WARP_GAP  = 0.35,  -- ดับเบิลวาป: เว้นกี่วิระหว่างวาป 2 ครั้งหลังเก็บของ
     ITEM_NAMES       = { "ResearchCapsule" },
