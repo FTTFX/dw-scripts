@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.24
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.25
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -1057,9 +1057,13 @@ function GEN.work(hrp, target)
     GEN.hold(target.prompt)
     -- v4.20: ยิง prompt ซ้ำ "เฉพาะตอนหลุดสกัดจริง" → กัน toggle ปิดการสกัด (ค้างตอนใกล้เสร็จ)
     -- v4.21: เครื่องคู่ player.Decoding = nil → ใช้ SlotNSpinning แทน (สัญญาณจริงว่าช่องเรากำลังหมุน)
+    -- v4.25: dual treadmill — Slot1Spinning ไม่ขึ้น แต่ player.Decoding ถูกเซ็ต (decode:Generator)
+    --   เช็คแค่ SlotNSpinning → คิดว่ายังไม่สกัด → re-fire = กดปุ่ม "หยุดการสกัด" = ลงจากลู่ → 0/45 วน
+    --   เพิ่ม: server Decoding ~= nil = ขึ้นเครื่องแล้ว → อย่า re-fire (ปล่อยลู่วิ่งเองอัตโนมัติ)
     local decodingThis
     if target.slot then
-        decodingThis = target.gen:GetAttribute("Slot" .. target.slot .. "Spinning") == true
+        decodingThis = (target.gen:GetAttribute("Slot" .. target.slot .. "Spinning") == true)
+            or (GEN.serverDecoding() ~= nil)
     else
         decodingThis = GEN.serverDecoding() == target.gen
     end
@@ -1473,7 +1477,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.24 [H]"
+titleLbl.Text = "DW Auto Gen v4.25 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1572,6 +1576,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.24 loaded — fix done อ่านจาก gen.Stats (กันคิดว่าเครื่องเสร็จผิด) + debug status")
+warn("[DW17] Auto Gen v4.25 loaded — dual treadmill: ไม่ re-fire ตอน Decoding~=nil (กันกดลงจากลู่เอง)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
