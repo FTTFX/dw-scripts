@@ -1,4 +1,4 @@
--- DW05_esp.txt — Dandy's World ESP + Speed + Noclip + FullBright v1.3
+-- DW05_esp.txt — Dandy's World ESP + Speed + Noclip + FullBright v1.4
 -- ESP: Generator(เขียว) + Twisted(แดง) + Player(เหลือง) | Speed Noclip | FullBright
 -- ปิด = ล้างทุกอย่าง + คืนค่า Lighting เดิม
 
@@ -29,6 +29,8 @@ local CFG = {
     NOCLIP_ON = true,
     BRIGHT_ON = false,  -- FullBright (ลดหมอก + เพิ่มแสง)
     SPEED_VAL = 60,     -- ความเร็ว (WalkSpeed ปกติ = 16)
+    WALLRAY_ON = false, -- v1.4: โชว์เส้น gen→มอน (เขียว=โล่ง/แดง=โดนกำแพง) + วงที่จุดชนกำแพง
+    MON_NEAR  = 45,     -- ระยะ (ตรงกับ DW17 MON_NEAR_GEN) ที่เริ่มลากเส้น
 }
 
 -- ── Lighting backup (เก็บค่าเดิมก่อนแก้) ──────────────────────────
@@ -200,6 +202,72 @@ local function removeHL(model)
     end
 end
 
+-- ════════════════════════════════════════════════════════════════
+-- v1.4: WallRay viz — เส้น gen→มอน + วงที่จุดชนกำแพง (ตรงกับ DW17 wall-check)
+-- ════════════════════════════════════════════════════════════════
+local wallMarks = {}
+local function clearWallMarks()
+    for _, p in pairs(wallMarks) do pcall(function() p:Destroy() end) end
+    wallMarks = {}
+end
+local function mkLine(a, b, color)
+    local p = Instance.new("Part")
+    p.Anchored = true p.CanCollide = false p.CanQuery = false p.CastShadow = false
+    p.Material = Enum.Material.Neon p.Color = color
+    p.Size = Vector3.new(0.15, 0.15, (a - b).Magnitude)
+    p.CFrame = CFrame.lookAt((a + b) / 2, b)
+    p.Parent = workspace
+    table.insert(wallMarks, p) ; table.insert(_G.DW05_HLS, p)
+end
+local function mkDisc(pos, normal, color)   -- วงแบนติดผิวที่ชน
+    local p = Instance.new("Part")
+    p.Anchored = true p.CanCollide = false p.CanQuery = false p.CastShadow = false
+    p.Shape = Enum.PartType.Cylinder p.Material = Enum.Material.Neon
+    p.Color = color p.Transparency = 0.25
+    p.Size = Vector3.new(0.3, 5, 5)
+    p.CFrame = CFrame.lookAt(pos, pos + normal) * CFrame.Angles(0, math.rad(90), 0)
+    p.Parent = workspace
+    table.insert(wallMarks, p) ; table.insert(_G.DW05_HLS, p)
+end
+
+local lastWallTick = 0
+local function updateWallRay()
+    if not CFG.WALLRAY_ON then if #wallMarks > 0 then clearWallMarks() end return end
+    if tick() - lastWallTick < 0.3 then return end
+    lastWallTick = tick()
+    clearWallMarks()
+    local genF, monF = getFolder("Generators"), getFolder("Monsters")
+    if not genF or not monF then return end
+    local mons = {}
+    for _, m in pairs(monF:GetChildren()) do
+        local h = m:FindFirstChildOfClass("Humanoid")
+        local hrp = m:FindFirstChild("HumanoidRootPart")
+        if h and h.Health > 0 and hrp then table.insert(mons, { m = m, hrp = hrp }) end
+    end
+    for _, gen in pairs(genF:GetChildren()) do
+        local ok, gpos = pcall(function() return gen:GetPivot().Position end)
+        if ok then
+            for _, mo in pairs(mons) do
+                local d = mo.hrp.Position - gpos
+                if math.sqrt(d.X*d.X + d.Z*d.Z) <= CFG.MON_NEAR then
+                    local from = gpos + Vector3.new(0, 3, 0)
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.IgnoreWater = true
+                    params.FilterDescendantsInstances = { mo.m, LP.Character, gen }
+                    local res = workspace:Raycast(from, mo.hrp.Position - from, params)
+                    if res then
+                        mkLine(from, res.Position, Color3.fromRGB(255, 60, 60))    -- โดนกำแพงบัง = แดง
+                        mkDisc(res.Position, res.Normal, Color3.fromRGB(255, 150, 0)) -- จุดชนกำแพง = วงส้ม
+                    else
+                        mkLine(from, mo.hrp.Position, Color3.fromRGB(60, 255, 60))  -- โล่ง (มอนเห็นเครื่อง) = เขียว
+                    end
+                end
+            end
+        end
+    end
+end
+
 local lastESPTick = 0
 local function updateESP()
     if not CFG.ESP_ON then return end
@@ -283,6 +351,7 @@ local conn = RS.Heartbeat:Connect(function()
 
     -- ESP update
     updateESP()
+    updateWallRay()   -- v1.4
 end)
 table.insert(_G.DW05_CONNS, conn)
 
@@ -295,6 +364,7 @@ table.insert(_G.DW05_CONNS,
         highlights = {}
         _G.DW05_HLS = {}
         lastESPTick = 0
+        clearWallMarks()   -- v1.4
     end)
 )
 
@@ -318,7 +388,7 @@ local titleLbl = Instance.new("TextLabel", frame)
 titleLbl.Size = UDim2.new(1, -22, 0, 20)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 20)
 titleLbl.TextColor3 = Color3.fromRGB(100, 255, 100)
-titleLbl.Text = "DW ESP v1.3"
+titleLbl.Text = "DW ESP v1.4"
 titleLbl.Font = Enum.Font.Code
 titleLbl.TextSize = 12
 titleLbl.BorderSizePixel = 0
@@ -418,6 +488,20 @@ fbBtn.MouseButton1Click:Connect(function()
 end)
 refreshFB()
 
+-- v1.4: WallRay toggle (เส้น gen→มอน + วงจุดชนกำแพง)
+local wrBtn = Instance.new("TextButton", frame)
+wrBtn.Size = UDim2.new(0, 94, 0, 20)
+wrBtn.Position = UDim2.new(0, 94, 0, 46)
+wrBtn.Font = Enum.Font.Code wrBtn.TextSize = 11 wrBtn.BorderSizePixel = 0
+Instance.new("UICorner", wrBtn).CornerRadius = UDim.new(0, 4)
+local function refreshWR()
+    wrBtn.Text = "WallRay: " .. (CFG.WALLRAY_ON and "ON" or "OFF")
+    wrBtn.BackgroundColor3 = CFG.WALLRAY_ON and Color3.fromRGB(255, 150, 0) or Color3.fromRGB(60,60,60)
+    wrBtn.TextColor3 = CFG.WALLRAY_ON and Color3.new(0,0,0) or Color3.fromRGB(180,180,180)
+end
+wrBtn.MouseButton1Click:Connect(function() CFG.WALLRAY_ON = not CFG.WALLRAY_ON refreshWR() end)
+refreshWR()
+
 -- Re-apply ตอนชั้นใหม่ (เกม reset Lighting/Atmosphere)
 table.insert(_G.DW05_CONNS,
     LIG.ChildAdded:Connect(function(c)
@@ -486,4 +570,4 @@ table.insert(_G.DW05_CONNS,
     end)
 )
 
-warn("[DW05] ESP (Gen+Twisted+Player) + Speed + Noclip + FullBright v1.3 loaded — กด X เพื่อปิด")
+warn("[DW05] ESP (Gen+Twisted+Player) + Speed + Noclip + FullBright v1.4 loaded — กด X เพื่อปิด")
