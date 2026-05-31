@@ -214,7 +214,7 @@ local function mkLine(a, b, color)
     local p = Instance.new("Part")
     p.Anchored = true p.CanCollide = false p.CanQuery = false p.CastShadow = false
     p.Material = Enum.Material.Neon p.Color = color
-    p.Size = Vector3.new(0.15, 0.15, (a - b).Magnitude)
+    p.Size = Vector3.new(0.4, 0.4, (a - b).Magnitude)
     p.CFrame = CFrame.lookAt((a + b) / 2, b)
     p.Parent = workspace
     table.insert(wallMarks, p) ; table.insert(_G.DW05_HLS, p)
@@ -266,6 +266,7 @@ local function updateWallRay()
             end
         end
     end
+    _G.DW05_RAYN = #wallMarks   -- v1.4: จำนวน part ที่วาด (ไว้โชว์ใน GUI)
 end
 
 local lastESPTick = 0
@@ -566,6 +567,7 @@ table.insert(_G.DW05_CONNS,
             local mCount = monF and #monF:GetChildren() or 0
             local gCount = genF and #genF:GetChildren() or 0
             infoLbl.Text = "Twisted:" .. mCount .. "  Gen:" .. gCount
+                .. (CFG.WALLRAY_ON and ("  Ray:" .. (_G.DW05_RAYN or 0)) or "")
         end
     end)
 )
