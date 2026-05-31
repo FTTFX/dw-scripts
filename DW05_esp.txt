@@ -1,0 +1,489 @@
+-- DW05_esp.txt — Dandy's World ESP + Speed + Noclip + FullBright v1.3
+-- ESP: Generator(เขียว) + Twisted(แดง) + Player(เหลือง) | Speed Noclip | FullBright
+-- ปิด = ล้างทุกอย่าง + คืนค่า Lighting เดิม
+
+-- ── Single-Instance Guard ─────────────────────────────────────────
+if _G.DW05_CONNS then
+    for _, c in pairs(_G.DW05_CONNS) do pcall(function() c:Disconnect() end) end
+end
+if _G.DW05_HLS then
+    for _, h in pairs(_G.DW05_HLS) do pcall(function() h:Destroy() end) end
+end
+if _G.DW05_BV then pcall(function() _G.DW05_BV:Destroy() end) end
+if _G.DW05_GUI then pcall(function() _G.DW05_GUI:Destroy() end) end
+_G.DW05_CONNS = {}
+_G.DW05_HLS   = {}
+_G.DW05_BV    = nil
+_G.DW05_GUI   = nil
+
+-- ── Services ──────────────────────────────────────────────────────
+local LP  = game.Players.LocalPlayer
+local RS  = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LIG = game:GetService("Lighting")
+
+-- ── Config ────────────────────────────────────────────────────────
+local CFG = {
+    ESP_ON    = true,
+    SPEED_ON  = true,
+    NOCLIP_ON = true,
+    BRIGHT_ON = false,  -- FullBright (ลดหมอก + เพิ่มแสง)
+    SPEED_VAL = 60,     -- ความเร็ว (WalkSpeed ปกติ = 16)
+}
+
+-- ── Lighting backup (เก็บค่าเดิมก่อนแก้) ──────────────────────────
+local LIG_BACKUP = nil
+local function applyBright(on)
+    if on then
+        if not LIG_BACKUP then
+            LIG_BACKUP = {
+                FogEnd     = LIG.FogEnd,
+                FogStart   = LIG.FogStart,
+                Brightness = LIG.Brightness,
+                Ambient    = LIG.Ambient,
+                OutdoorAmbient = LIG.OutdoorAmbient,
+                ClockTime  = LIG.ClockTime,
+                atmosphere = {},
+            }
+            for _, a in pairs(LIG:GetChildren()) do
+                if a:IsA("Atmosphere") then
+                    LIG_BACKUP.atmosphere[a] = {
+                        Density = a.Density, Haze = a.Haze,
+                        Glare = a.Glare, Offset = a.Offset,
+                    }
+                end
+            end
+        end
+        pcall(function()
+            LIG.FogEnd     = 100000
+            LIG.FogStart   = 100000
+            LIG.Brightness = 3
+            LIG.Ambient    = Color3.fromRGB(200, 200, 200)
+            LIG.OutdoorAmbient = Color3.fromRGB(200, 200, 200)
+            LIG.ClockTime  = 14
+            for _, a in pairs(LIG:GetChildren()) do
+                if a:IsA("Atmosphere") then
+                    a.Density = 0
+                    a.Haze    = 0
+                    a.Glare   = 0
+                end
+            end
+        end)
+    else
+        if LIG_BACKUP then
+            pcall(function()
+                LIG.FogEnd     = LIG_BACKUP.FogEnd
+                LIG.FogStart   = LIG_BACKUP.FogStart
+                LIG.Brightness = LIG_BACKUP.Brightness
+                LIG.Ambient    = LIG_BACKUP.Ambient
+                LIG.OutdoorAmbient = LIG_BACKUP.OutdoorAmbient
+                LIG.ClockTime  = LIG_BACKUP.ClockTime
+                for a, vals in pairs(LIG_BACKUP.atmosphere) do
+                    if a and a.Parent then
+                        a.Density = vals.Density
+                        a.Haze    = vals.Haze
+                        a.Glare   = vals.Glare
+                        a.Offset  = vals.Offset
+                    end
+                end
+            end)
+            LIG_BACKUP = nil
+        end
+    end
+end
+
+-- ── Cleanup function (ใช้ตอนปิด) ─────────────────────────────────
+local function cleanup()
+    -- disconnect connections
+    for _, c in pairs(_G.DW05_CONNS) do pcall(function() c:Disconnect() end) end
+    _G.DW05_CONNS = {}
+    -- ลบ Highlight
+    for _, h in pairs(_G.DW05_HLS) do pcall(function() h:Destroy() end) end
+    _G.DW05_HLS = {}
+    -- คืน speed + noclip
+    local char = LP.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 16
+            hum.PlatformStand = false
+        end
+        for _, p in pairs(char:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = true end
+        end
+    end
+    -- ลบ BodyVelocity
+    pcall(function() if _G.DW05_BV then _G.DW05_BV:Destroy() _G.DW05_BV = nil end end)
+    -- คืน Lighting
+    applyBright(false)
+    -- ลบ GUI
+    pcall(function() if _G.DW05_GUI then _G.DW05_GUI:Destroy() _G.DW05_GUI = nil end end)
+    warn("[DW05] ปิดแล้ว")
+end
+
+-- ── หา paths (dynamic — รองรับทุก map name) ──────────────────────
+local function getFolder(name)
+    -- หาใน CurrentRoom ก่อน (ไม่สนชื่อ map)
+    local currentRoom = workspace:FindFirstChild("CurrentRoom")
+    if currentRoom then
+        for _, map in pairs(currentRoom:GetChildren()) do
+            local f = map:FindFirstChild(name)
+            if f then return f end
+        end
+    end
+    -- fallback: scan workspace ทั้งหมด
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == name then return obj end
+    end
+    return nil
+end
+
+-- ── ESP: สร้าง Highlight ──────────────────────────────────────────
+local highlights = {}  -- [model] = Highlight
+
+local function makeHL(model, fillColor, outlineColor, labelText)
+    if highlights[model] then return end
+
+    local container = {}  -- เก็บทุก instance ที่สร้าง
+
+    -- Highlight (ทะลุกำแพง)
+    pcall(function()
+        local h = Instance.new("Highlight")
+        h.Adornee             = model
+        h.FillColor           = fillColor
+        h.OutlineColor        = outlineColor
+        h.FillTransparency    = 1    -- v1.3: ไม่มี fill เรืองแสง (กันแสบตา) — เส้นขอบอย่างเดียว
+        h.OutlineTransparency = 0
+        h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Parent              = model
+        table.insert(container, h)
+        table.insert(_G.DW05_HLS, h)
+    end)
+
+    -- v1.3: ตัด PointLight ออก (แสงสว่างจ้า = แสบตา) — ใช้แค่เส้นขอบ + ป้ายชื่อ
+
+    -- BillboardGui (ป้ายชื่อ)
+    pcall(function()
+        local root = model:FindFirstChild("HumanoidRootPart")
+            or model:FindFirstChildWhichIsA("BasePart")
+        if root then
+            local bb = Instance.new("BillboardGui")
+            bb.Size            = UDim2.new(0, 100, 0, 28)
+            bb.StudsOffset     = Vector3.new(0, 3, 0)
+            bb.AlwaysOnTop     = true  -- เห็นทะลุกำแพง
+            bb.Parent          = root
+
+            local lbl = Instance.new("TextLabel", bb)
+            lbl.Size            = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextColor3      = outlineColor
+            lbl.TextStrokeColor3 = Color3.new(0,0,0)
+            lbl.TextStrokeTransparency = 0.4
+            lbl.Text            = labelText or model.Name
+            lbl.Font            = Enum.Font.GothamBold
+            lbl.TextSize        = 14
+
+            table.insert(container, bb)
+            table.insert(_G.DW05_HLS, bb)
+        end
+    end)
+
+    highlights[model] = container
+end
+
+local function removeHL(model)
+    if highlights[model] then
+        for _, inst in pairs(highlights[model]) do
+            pcall(function() inst:Destroy() end)
+        end
+        highlights[model] = nil
+    end
+end
+
+local lastESPTick = 0
+local function updateESP()
+    if not CFG.ESP_ON then return end
+    if tick() - lastESPTick < 1 then return end  -- refresh ทุก 1s
+    lastESPTick = tick()
+
+    -- Generator ESP (เขียว)
+    local genFolder = getFolder("Generators")
+    if genFolder then
+        for _, gen in pairs(genFolder:GetChildren()) do
+            local completed = gen:FindFirstChild("Completed", true)
+            local isDone = completed and completed:IsA("BoolValue") and completed.Value
+            if not isDone then
+                local cur = gen:FindFirstChild("CurrentAmount", true)
+                local req = gen:FindFirstChild("RequiredAmount", true)
+                local prog = (cur and req) and (cur.Value.."/"..req.Value) or ""
+                makeHL(gen, Color3.fromRGB(0, 255, 80), Color3.fromRGB(0, 255, 80), "⚙ Gen "..prog)
+            else
+                removeHL(gen)
+            end
+        end
+    end
+
+    -- Twisted ESP (แดง)
+    local monFolder = getFolder("Monsters")
+    if monFolder then
+        for _, mon in pairs(monFolder:GetChildren()) do
+            local hum = mon:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                makeHL(mon, Color3.fromRGB(255, 50, 50), Color3.fromRGB(255, 120, 120), "⚠ "..mon.Name)
+            else
+                removeHL(mon)
+            end
+        end
+    end
+
+    -- Player ESP (เหลือง — เพื่อนคนอื่น)
+    for _, pl in pairs(game:GetService("Players"):GetPlayers()) do
+        if pl ~= LP then
+            local ch = pl.Character
+            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+            if ch and hum and hum.Health > 0 then
+                makeHL(ch, Color3.fromRGB(255, 230, 50), Color3.fromRGB(255, 230, 100), "👤 "..pl.Name)
+            elseif ch then
+                removeHL(ch)
+            end
+        end
+    end
+
+    -- ลบ highlight ของ model ที่หายไปแล้ว
+    for model, container in pairs(highlights) do
+        if not model.Parent then
+            for _, inst in pairs(container) do
+                pcall(function() inst:Destroy() end)
+            end
+            highlights[model] = nil
+        end
+    end
+end
+
+-- ── Noclip: ใช้ Stepped (runs ก่อน physics = ผลทันที) ─────────────
+local noclipConn = RS.Stepped:Connect(function()
+    if not CFG.NOCLIP_ON then return end
+    local char = LP.Character
+    if not char then return end
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = false end
+    end
+end)
+table.insert(_G.DW05_CONNS, noclipConn)
+
+-- ── Speed + ESP loop (Heartbeat) ─────────────────────────────────
+local conn = RS.Heartbeat:Connect(function()
+    local char = LP.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+
+    -- Speed
+    hum.WalkSpeed = CFG.SPEED_ON and CFG.SPEED_VAL or 16
+
+    -- ESP update
+    updateESP()
+end)
+table.insert(_G.DW05_CONNS, conn)
+
+-- ── ESP cleanup เมื่อขึ้นชั้นใหม่ ────────────────────────────────
+table.insert(_G.DW05_CONNS,
+    LP.CharacterAdded:Connect(function()
+        for model, hl in pairs(highlights) do
+            pcall(function() hl:Destroy() end)
+        end
+        highlights = {}
+        _G.DW05_HLS = {}
+        lastESPTick = 0
+    end)
+)
+
+-- ── GUI ───────────────────────────────────────────────────────────
+local gui = Instance.new("ScreenGui", LP.PlayerGui)
+gui.Name = "DW05GUI"
+gui.ResetOnSpawn = false
+_G.DW05_GUI = gui
+
+local frame = Instance.new("Frame", gui)
+frame.Size = UDim2.new(0, 190, 0, 180)
+frame.Position = UDim2.new(0, 10, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
+-- Title + X
+local titleLbl = Instance.new("TextLabel", frame)
+titleLbl.Size = UDim2.new(1, -22, 0, 20)
+titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 20)
+titleLbl.TextColor3 = Color3.fromRGB(100, 255, 100)
+titleLbl.Text = "DW ESP v1.3"
+titleLbl.Font = Enum.Font.Code
+titleLbl.TextSize = 12
+titleLbl.BorderSizePixel = 0
+Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
+
+local closeBtn = Instance.new("TextButton", frame)
+closeBtn.Size = UDim2.new(0, 20, 0, 20)
+closeBtn.Position = UDim2.new(1, -20, 0, 0)
+closeBtn.BackgroundColor3 = Color3.fromRGB(160, 30, 30)
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.Text = "X"
+closeBtn.Font = Enum.Font.Code
+closeBtn.TextSize = 11
+closeBtn.BorderSizePixel = 0
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(cleanup)
+
+-- helper สร้างปุ่ม toggle
+local function makeToggle(parent, label, yPos, getVal, setVal, onColor, offColor)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(0, 90, 0, 20)
+    btn.Position = UDim2.new(0, 2, 0, yPos)
+    btn.Font = Enum.Font.Code
+    btn.TextSize = 11
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+    local function refresh()
+        local v = getVal()
+        btn.Text = label .. ": " .. (v and "ON" or "OFF")
+        btn.BackgroundColor3 = v and onColor or Color3.fromRGB(60,60,60)
+        btn.TextColor3 = v and Color3.new(0,0,0) or Color3.fromRGB(180,180,180)
+    end
+    btn.MouseButton1Click:Connect(function()
+        setVal(not getVal())
+        refresh()
+    end)
+    refresh()
+    return btn, refresh
+end
+
+-- ESP toggle
+makeToggle(frame, "ESP", 23,
+    function() return CFG.ESP_ON end,
+    function(v) CFG.ESP_ON = v
+        if not v then
+            for model, hl in pairs(highlights) do
+                pcall(function() hl:Destroy() end)
+            end
+            highlights = {}
+            _G.DW05_HLS = {}
+        else
+            lastESPTick = 0
+        end
+    end,
+    Color3.fromRGB(100, 255, 100), nil)
+
+-- Speed toggle
+makeToggle(frame, "Speed", 46,
+    function() return CFG.SPEED_ON end,
+    function(v) CFG.SPEED_ON = v end,
+    Color3.fromRGB(100, 200, 255), nil)
+
+-- Noclip toggle
+makeToggle(frame, "Noclip", 69,
+    function() return CFG.NOCLIP_ON end,
+    function(v)
+        CFG.NOCLIP_ON = v
+        if not v then
+            local char = LP.Character
+            if char then
+                for _, p in pairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = true end
+                end
+            end
+        end
+    end,
+    Color3.fromRGB(255, 180, 50), nil)
+
+-- FullBright toggle (ลดหมอก + เพิ่มแสง)
+local fbBtn = Instance.new("TextButton", frame)
+fbBtn.Size = UDim2.new(0, 94, 0, 20)
+fbBtn.Position = UDim2.new(0, 94, 0, 69)
+fbBtn.Font = Enum.Font.Code
+fbBtn.TextSize = 11
+fbBtn.BorderSizePixel = 0
+Instance.new("UICorner", fbBtn).CornerRadius = UDim.new(0, 4)
+local function refreshFB()
+    fbBtn.Text = "Bright: " .. (CFG.BRIGHT_ON and "ON" or "OFF")
+    fbBtn.BackgroundColor3 = CFG.BRIGHT_ON and Color3.fromRGB(255, 255, 120) or Color3.fromRGB(60,60,60)
+    fbBtn.TextColor3 = CFG.BRIGHT_ON and Color3.new(0,0,0) or Color3.fromRGB(180,180,180)
+end
+fbBtn.MouseButton1Click:Connect(function()
+    CFG.BRIGHT_ON = not CFG.BRIGHT_ON
+    applyBright(CFG.BRIGHT_ON)
+    refreshFB()
+end)
+refreshFB()
+
+-- Re-apply ตอนชั้นใหม่ (เกม reset Lighting/Atmosphere)
+table.insert(_G.DW05_CONNS,
+    LIG.ChildAdded:Connect(function(c)
+        if CFG.BRIGHT_ON and c:IsA("Atmosphere") then
+            task.wait(0.1)
+            applyBright(true)
+        end
+    end)
+)
+
+-- Speed label
+local spdLbl = Instance.new("TextLabel", frame)
+spdLbl.Size = UDim2.new(1, -4, 0, 14)
+spdLbl.Position = UDim2.new(0, 2, 0, 92)
+spdLbl.BackgroundTransparency = 1
+spdLbl.TextColor3 = Color3.fromRGB(200, 200, 100)
+spdLbl.Text = "Speed: " .. CFG.SPEED_VAL
+spdLbl.Font = Enum.Font.Code
+spdLbl.TextSize = 11
+
+-- Speed ปุ่ม -10 -1 +1 +10
+local spdBtns = {
+    {label="-10", dx=0,   val=-10},
+    {label="-1",  dx=40,  val=-1},
+    {label="+1",  dx=80,  val=1},
+    {label="+10", dx=120, val=10},
+}
+for _, b in pairs(spdBtns) do
+    local btn = Instance.new("TextButton", frame)
+    btn.Size = UDim2.new(0, 38, 0, 18)
+    btn.Position = UDim2.new(0, b.dx + 2, 0, 108)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    btn.TextColor3 = Color3.new(1,1,1)
+    btn.Text = b.label
+    btn.Font = Enum.Font.Code
+    btn.TextSize = 11
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    local dv = b.val
+    btn.MouseButton1Click:Connect(function()
+        CFG.SPEED_VAL = math.max(16, CFG.SPEED_VAL + dv)
+        spdLbl.Text = "Speed: " .. CFG.SPEED_VAL
+    end)
+end
+
+-- Info label (ESP count)
+local infoLbl = Instance.new("TextLabel", frame)
+infoLbl.Size = UDim2.new(1, -4, 0, 14)
+infoLbl.Position = UDim2.new(0, 2, 0, 130)
+infoLbl.BackgroundTransparency = 1
+infoLbl.TextColor3 = Color3.fromRGB(140, 140, 140)
+infoLbl.Text = "..."
+infoLbl.Font = Enum.Font.Code
+infoLbl.TextSize = 10
+
+-- GUI update
+table.insert(_G.DW05_CONNS,
+    RS.Heartbeat:Connect(function()
+        if tick() % 0.5 < 0.05 then
+            local monF = getFolder("Monsters")
+            local genF = getFolder("Generators")
+            local mCount = monF and #monF:GetChildren() or 0
+            local gCount = genF and #genF:GetChildren() or 0
+            infoLbl.Text = "Twisted:" .. mCount .. "  Gen:" .. gCount
+        end
+    end)
+)
+
+warn("[DW05] ESP (Gen+Twisted+Player) + Speed + Noclip + FullBright v1.3 loaded — กด X เพื่อปิด")
