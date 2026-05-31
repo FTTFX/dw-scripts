@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.25
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.26
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -127,6 +127,7 @@ local STATE = {
     seenCF         = nil,     -- CFrame บินหนีตอนถูกเห็น
     seenWarpAt     = nil,     -- tick() ที่ตั้ง/ยก seenCF ล่าสุด (ตรวจ recheck + ดับเบิลวาป)
     lastHeal       = 0,       -- tick() ที่กดใช้ heal ล่าสุด (cooldown)
+    lastHealth     = nil,     -- v4.26: Humanoid.Health เฟรมก่อน (ตรวจเลือดลด = โดนตี → บินหนี)
 }
 
 local function status(msg) STATE.lastStatus = msg end
@@ -878,8 +879,9 @@ function GEN.getPending()
                     if s1ok then slot = 1
                     elseif s2ok then slot = 2 end
                 end
-                friendBusy = (slot == nil)                 -- ทั้ง 2 ช่องกดไม่ได้ = ข้าม
-                if slot then prompt, standPos = dualSlotData(gen, slot) end
+                friendBusy = (slot == nil)                 -- ทั้ง 2 ช่องกดไม่ได้ = busy
+                if slot then prompt, standPos = dualSlotData(gen, slot)
+                else prompt = p1 or p2 end   -- v4.26: ทั้ง 2 ช่องจอง → ใส่ prompt อ้างอิง (จะได้ hover รอช่องว่าง ไม่ "หาเครื่องไม่เจอ")
             else
                 -- v4.15: เครื่องเดี่ยว — ถ้า "เรา Decoding = gen นี้" = ไม่บล็อก (กันเพื่อนเดินผ่าน Treadmill)
                 friendBusy = false
@@ -1299,6 +1301,18 @@ local conn = RS.Heartbeat:Connect(function()
         return
     end
 
+    -- ── v4.26: HP ลด = โดนตี → บินหนีทันที (เป้าหมายหลัก "ห้ามตาย") ──
+    -- มอนบางตัวไม่ set NoDecode → ระบบเดิมไม่หนี → ยืนตาย. เช็คเลือดตรงๆ ทริกด้วยกลไก seen เดิม
+    local hum0 = char:FindFirstChildOfClass("Humanoid")
+    if hum0 then
+        local hp = hum0.Health
+        if STATE.lastHealth and hp < STATE.lastHealth - 0.5 and hp > 0 then
+            STATE.seenUntil = tick() + CFG.SEEN_GRACE   -- โดนตี → บินหนีเหมือนถูกเห็น
+            warn("[DW17] HP ลด " .. string.format("%.0f→%.0f", STATE.lastHealth, hp) .. " → บินหนี")
+        end
+        STATE.lastHealth = hp
+    end
+
     -- ── มอนเห็นเรา (NoDecode) → บินหนีจนพ้นสายตา + grace ──────────
     -- (พอลงมา pickTarget จะ reroute ไปเครื่องที่ไม่มีมอนเอง — เช็คแนวราบจากเครื่อง)
     local entry = WORLD.getEntry()
@@ -1477,7 +1491,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.25 [H]"
+titleLbl.Text = "DW Auto Gen v4.26 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1576,6 +1590,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.25 loaded — dual treadmill: ไม่ re-fire ตอน Decoding~=nil (กันกดลงจากลู่เอง)")
+warn("[DW17] Auto Gen v4.26 loaded — HP ลด=บินหนีทันที (ห้ามตาย) + dual จองหมด hover รอ (ไม่ยืนเฉย)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
