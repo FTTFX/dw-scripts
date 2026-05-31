@@ -27,7 +27,8 @@ local CFG = {
     LOOP_INTERVAL    = 0.08,  -- throttle logic ทุกกี่วิ
     -- gen work — DW16 skillcheck = แกนหลักในการเติม | prompt แค่ "เริ่มสกัด"
     GEN_STALL        = 1.5,   -- ถ้า CurrentAmount ไม่ขึ้นเกินนี้ (วิ) → fire prompt ซ้ำ (re-เริ่มสกัด)
-    MOUNT_TIMEOUT    = 0.1,   -- v4.36: ถึงเครื่องแล้วขึ้นไม่ติดเกินนี้ (วิ) = มีบอทตัวอื่นจอง → ทิ้งไปตัวอื่น (กันชน/ยืนรอ)
+    MOUNT_TIMEOUT     = 1.5,  -- v4.37: fallback — ขึ้นไม่ติดเกินนี้ (วิ) = ทิ้งไปตัวอื่น (กันค้าง). อย่าต่ำกว่า ~1 (mount ใช้เวลา)
+    MOUNT_TAKEN_GRACE = 0.4,  -- v4.37: ถ้า "ช่องถูกจองโดยตัวอื่น" (prompt ปิด) → ทิ้งเร็วแค่นี้ (ไวสำหรับกองทัพบอท ลดได้ถึง ~0.25)
     GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
     HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
     MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
@@ -1148,18 +1149,21 @@ function GEN.work(hrp, target)
         decodingThis = GEN.serverDecoding() == target.gen
     end
 
-    -- v4.36: ขึ้นไม่ติดเร็วๆ (บอทตัวอื่นจองไปแล้ว/ชนกัน) → ทิ้งเครื่องนี้ ไปตัวอื่นทันที (กันยืนรอ/ชน)
+    -- v4.37: ทิ้งเครื่องไว → 2 กรณี: (A) ช่องถูกจองโดยตัวอื่นจริง = ทิ้งเร็ว (grace 0.4s) | (B) ขึ้นไม่ติดนานเกิน = fallback
+    --   "ถูกจอง" = prompt ปิดทั้งที่เรายังไม่ขึ้น (ถ้าเป็นเราขึ้นเอง decodingThis จะ true ภายใน grace)
     if decodingThis then
         STATE.mountTryStart = nil
     else
         STATE.mountTryStart = STATE.mountTryStart or tick()
-        if tick() - STATE.mountTryStart > CFG.MOUNT_TIMEOUT then
+        local elapsed = tick() - STATE.mountTryStart
+        local takenByOther = (target.prompt and target.prompt.Enabled == false)   -- ช่องปิด = คนอื่นจอง
+        if (elapsed > CFG.MOUNT_TAKEN_GRACE and takenByOther) or (elapsed > CFG.MOUNT_TIMEOUT) then
             STATE.genBlock[target.gen] = tick() + CFG.FLEE_COOLDOWN   -- บล็อกสั้นๆ กันรีบวกกลับ
             STATE.workGenRef    = nil
             STATE.workSlot      = nil
             STATE.mountTryStart = nil
             GEN.releaseHold()
-            status("↪ ขึ้นไม่ติด/ไม่ว่าง → ไปเครื่องอื่น")
+            status(takenByOther and "↪ ช่องถูกจอง → ไปเครื่องอื่น" or "↪ ขึ้นไม่ติด → ไปเครื่องอื่น")
             return
         end
     end
