@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.20
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.21
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -797,33 +797,33 @@ local function slotPrompt(gen, promptName)
     local pf = gen:FindFirstChild(promptName)
     return pf and pf:FindFirstChildWhichIsA("ProximityPrompt", true)
 end
--- หา teleport position ใน folder (รองรับ treadmill)
-local function slotStand(gen, folderNames)
-    for _, fn in pairs(folderNames) do
-        local f = gen:FindFirstChild(fn)
-        if f then
-            -- v4.19: ชื่อ part ใน treadmill folder ไม่แน่นอน → fallback หา BasePart ใดก็ได้
-            local tp = f:FindFirstChild("TreadmillTeleportPosition") or f:FindFirstChild("TeleportPosition")
-                or f:FindFirstChildWhichIsA("BasePart", true)
-            if tp and tp:IsA("BasePart") then return tp.Position end
-        end
+-- หา teleport position — v4.21: เลือก part ตามชนิดเครื่อง (spy ยืนยัน):
+--   Circle/Original → TeleportPosition (Y พื้น) | Treadmill → TreadmillTeleportPosition (Y+1)
+--   เดิมหยิบ Treadmill ก่อนเสมอ → เครื่อง Circle ยืนผิดจุด
+local function slotStand(gen, folderName, treadmill)
+    local f = gen:FindFirstChild(folderName) or gen:FindFirstChild("TeleportPositions")
+    if not f then return nil end
+    local tp
+    if treadmill then
+        tp = f:FindFirstChild("TreadmillTeleportPosition") or f:FindFirstChild("TeleportPosition")
+    else
+        tp = f:FindFirstChild("TeleportPosition") or f:FindFirstChild("TreadmillTeleportPosition")
     end
-    return nil
+    tp = tp or f:FindFirstChildWhichIsA("BasePart", true)
+    return (tp and tp:IsA("BasePart")) and tp.Position or nil
 end
 
 -- เครื่องคู่: คืน prompt+standPos ของช่อง (1=Prompt/หลัก, 2=Prompt2/Mirror)
 -- เลือก folder ตามชนิด minigame ของช่องนั้น (Treadmill → TreadmillTeleportPositions)
 local function dualSlotData(gen, slot)
     if slot == 2 then
-        local tread = tostring(gen:GetAttribute("Prompt2MinigameType")):find("Treadmill")
-        return slotPrompt(gen, "Prompt2"),
-               slotStand(gen, tread and { "TreadmillTeleportPositions_Mirror", "TeleportPositions_Mirror" }
-                                     or  { "TeleportPositions_Mirror", "TreadmillTeleportPositions_Mirror" })
+        local tread = tostring(gen:GetAttribute("Prompt2MinigameType")):find("Treadmill") ~= nil
+        local folder = tread and "TreadmillTeleportPositions_Mirror" or "TeleportPositions_Mirror"
+        return slotPrompt(gen, "Prompt2"), slotStand(gen, folder, tread)
     else
-        local tread = tostring(gen:GetAttribute("MinigameType")):find("Treadmill")
-        return slotPrompt(gen, "Prompt"),
-               slotStand(gen, tread and { "TreadmillTeleportPositions", "TeleportPositions" }
-                                     or  { "TeleportPositions", "TreadmillTeleportPositions" })
+        local tread = tostring(gen:GetAttribute("MinigameType")):find("Treadmill") ~= nil
+        local folder = tread and "TreadmillTeleportPositions" or "TeleportPositions"
+        return slotPrompt(gen, "Prompt"), slotStand(gen, folder, tread)
     end
 end
 
@@ -862,17 +862,21 @@ function GEN.getPending()
             local slot   -- ช่องเครื่องคู่ที่เลือก (1/2) — nil = เครื่องเดี่ยว
 
             if isDual then
-                -- v4.9: เครื่องคู่ → เช็ค Slot1Spinning/Slot2Spinning ของ server อย่างเดียว
-                -- ช่องที่เราถืออยู่ (workSlot) ไม่นับเป็น busy แม้ Spinning=true
-                local s1Busy = gen:GetAttribute("Slot1Spinning") == true and STATE.workSlot ~= 1
-                local s2Busy = gen:GetAttribute("Slot2Spinning") == true and STATE.workSlot ~= 2
-                -- คงช่องเดิมของเรา (ถ้ายังถืออยู่)
-                if gen == STATE.workGenRef and STATE.workSlot then slot = STATE.workSlot end
+                -- v4.21: ใช้ prompt.Enabled เป็นสัญญาณหลัก (spy ยืนยัน: ช่องถูกจอง/เสร็จ → Enabled=false)
+                --   fireproximityprompt บน prompt ที่ Enabled=false = ไม่เกิดอะไร → 0/45 ค้าง
+                --   ช่องที่เราถืออยู่ (workSlot) คงไว้แม้ Enabled=false (เพราะเรากำลังสกัด→prompt ปิดเอง)
+                local p1   = slotPrompt(gen, "Prompt")
+                local p2   = slotPrompt(gen, "Prompt2")
+                local mine = (gen == STATE.workGenRef) and STATE.workSlot or nil
+                local s1ok = (mine == 1) or (p1 ~= nil and p1.Enabled == true)
+                local s2ok = (mine == 2) or (p2 ~= nil and p2.Enabled == true)
+                if mine == 1 and s1ok then slot = 1
+                elseif mine == 2 and s2ok then slot = 2 end
                 if not slot then
-                    if not s1Busy then slot = 1
-                    elseif not s2Busy then slot = 2 end
+                    if s1ok then slot = 1
+                    elseif s2ok then slot = 2 end
                 end
-                friendBusy = (slot == nil)                 -- ทั้ง 2 ช่อง spin = ข้าม
+                friendBusy = (slot == nil)                 -- ทั้ง 2 ช่องกดไม่ได้ = ข้าม
                 if slot then prompt, standPos = dualSlotData(gen, slot) end
             else
                 -- v4.15: เครื่องเดี่ยว — ถ้า "เรา Decoding = gen นี้" = ไม่บล็อก (กันเพื่อนเดินผ่าน Treadmill)
@@ -1040,10 +1044,14 @@ function GEN.work(hrp, target)
     local hd = target.prompt.HoldDuration or 0
     -- v4.16: revert v4.13 spam — Ichor prompt = toggle (กดสลับ on/off) → fire ครั้งเดียวพอ
     GEN.hold(target.prompt)
-    -- v4.20: ยิง prompt ซ้ำ "เฉพาะตอนหลุดสกัดจริง" (server Decoding ≠ เครื่องนี้)
-    --   เดิม: stall 1.5s → ยิงซ้ำ = toggle ปิดการสกัดที่กำลังทำงาน → ค้างตอนใกล้เสร็จ (progress ขึ้นช้า/skillcheck ห่าง)
-    --   ถ้ายัง decode อยู่ = กำลังสกัดดีๆ → อย่าแตะ prompt (กัน toggle off)
-    local decodingThis = GEN.serverDecoding() == target.gen
+    -- v4.20: ยิง prompt ซ้ำ "เฉพาะตอนหลุดสกัดจริง" → กัน toggle ปิดการสกัด (ค้างตอนใกล้เสร็จ)
+    -- v4.21: เครื่องคู่ player.Decoding = nil → ใช้ SlotNSpinning แทน (สัญญาณจริงว่าช่องเรากำลังหมุน)
+    local decodingThis
+    if target.slot then
+        decodingThis = target.gen:GetAttribute("Slot" .. target.slot .. "Spinning") == true
+    else
+        decodingThis = GEN.serverDecoding() == target.gen
+    end
     local refire = (not STATE.workStarted) or (stalled and not decodingThis)
     if refire then
         pcall(function() fireproximityprompt(target.prompt, hd) end)
@@ -1446,7 +1454,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.20 [H]"
+titleLbl.Text = "DW Auto Gen v4.21 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1545,6 +1553,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.20 loaded — ยิง prompt ซ้ำเฉพาะตอนหลุดสกัด (กัน toggle ปิด → ค้างตอนใกล้เสร็จ)")
+warn("[DW17] Auto Gen v4.21 loaded — เครื่องคู่: gate ด้วย prompt.Enabled + standPos ตามชนิด + SlotNSpinning (กดติด/ไม่ยืนเปล่า)")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
