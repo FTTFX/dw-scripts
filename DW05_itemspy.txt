@@ -1,0 +1,253 @@
+-- DW05_itemspy.txt — Dandy's World Item Spy v2.0
+-- ดู Item ทั้งหมดใน StoryboardMap.Items (ชื่อจริงเป๊ะ ไม่กรอง keyword)
+
+local LP = game.Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+local old = pg:FindFirstChild("DWITEMGUI")
+if old then old:Destroy() end
+
+-- ── GUI ──────────────────────────────────────────────────────────
+local gui = Instance.new("ScreenGui")
+gui.Name = "DWITEMGUI"
+gui.ResetOnSpawn = false
+gui.Parent = pg
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 560, 0, 480)
+frame.Position = UDim2.new(0.5, -280, 0.5, -240)
+frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 28)
+titleBar.BackgroundColor3 = Color3.fromRGB(20, 60, 110)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = frame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size = UDim2.new(1, -10, 1, 0)
+titleLbl.Position = UDim2.new(0, 10, 0, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.TextColor3 = Color3.fromRGB(120, 200, 255)
+titleLbl.Text = "DW Item Spy v2.0 — scan..."
+titleLbl.Font = Enum.Font.Code
+titleLbl.TextSize = 12
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = titleBar
+
+local tabResult = Instance.new("TextButton")
+tabResult.Size = UDim2.new(0, 110, 0, 24)
+tabResult.Position = UDim2.new(0, 4, 0, 30)
+tabResult.BackgroundColor3 = Color3.fromRGB(30, 80, 150)
+tabResult.TextColor3 = Color3.fromRGB(200, 230, 255)
+tabResult.Text = "ผลลัพธ์"
+tabResult.Font = Enum.Font.Code
+tabResult.TextSize = 12
+tabResult.BorderSizePixel = 0
+tabResult.Parent = frame
+Instance.new("UICorner", tabResult).CornerRadius = UDim.new(0, 4)
+
+local tabCopy = Instance.new("TextButton")
+tabCopy.Size = UDim2.new(0, 110, 0, 24)
+tabCopy.Position = UDim2.new(0, 118, 0, 30)
+tabCopy.BackgroundColor3 = Color3.fromRGB(30, 100, 50)
+tabCopy.TextColor3 = Color3.fromRGB(100, 255, 130)
+tabCopy.Text = "Copy"
+tabCopy.Font = Enum.Font.Code
+tabCopy.TextSize = 12
+tabCopy.BorderSizePixel = 0
+tabCopy.Parent = frame
+Instance.new("UICorner", tabCopy).CornerRadius = UDim.new(0, 4)
+
+local rescanBtn = Instance.new("TextButton")
+rescanBtn.Size = UDim2.new(0, 90, 0, 24)
+rescanBtn.Position = UDim2.new(0, 232, 0, 30)
+rescanBtn.BackgroundColor3 = Color3.fromRGB(70, 50, 10)
+rescanBtn.TextColor3 = Color3.fromRGB(255, 210, 80)
+rescanBtn.Text = "Rescan"
+rescanBtn.Font = Enum.Font.Code
+rescanBtn.TextSize = 12
+rescanBtn.BorderSizePixel = 0
+rescanBtn.Parent = frame
+Instance.new("UICorner", rescanBtn).CornerRadius = UDim.new(0, 4)
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 70, 0, 24)
+closeBtn.Position = UDim2.new(1, -74, 0, 30)
+closeBtn.BackgroundColor3 = Color3.fromRGB(120, 20, 20)
+closeBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+closeBtn.Text = "ปิด"
+closeBtn.Font = Enum.Font.Code
+closeBtn.TextSize = 12
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = frame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
+closeBtn.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+local scroll = Instance.new("ScrollingFrame")
+scroll.Size = UDim2.new(1, -8, 1, -90)
+scroll.Position = UDim2.new(0, 4, 0, 58)
+scroll.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+scroll.BorderSizePixel = 0
+scroll.ScrollBarThickness = 5
+scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+scroll.Parent = frame
+Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 4)
+local padS = Instance.new("UIPadding")
+padS.PaddingLeft = UDim.new(0, 6)
+padS.Parent = scroll
+local layout = Instance.new("UIListLayout")
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 1)
+layout.Parent = scroll
+
+local copyBox = Instance.new("TextBox")
+copyBox.Size = UDim2.new(1, -8, 1, -90)
+copyBox.Position = UDim2.new(0, 4, 0, 58)
+copyBox.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+copyBox.TextColor3 = Color3.fromRGB(180, 255, 180)
+copyBox.Font = Enum.Font.Code
+copyBox.TextSize = 11
+copyBox.TextXAlignment = Enum.TextXAlignment.Left
+copyBox.TextYAlignment = Enum.TextYAlignment.Top
+copyBox.MultiLine = true
+copyBox.ClearTextOnFocus = false
+copyBox.Text = "..."
+copyBox.BorderSizePixel = 0
+copyBox.Visible = false
+copyBox.Parent = frame
+Instance.new("UICorner", copyBox).CornerRadius = UDim.new(0, 4)
+local padB = Instance.new("UIPadding")
+padB.PaddingLeft = UDim.new(0, 6) padB.PaddingTop = UDim.new(0, 4)
+padB.Parent = copyBox
+
+tabResult.MouseButton1Click:Connect(function() scroll.Visible=true copyBox.Visible=false end)
+tabCopy.MouseButton1Click:Connect(function()
+    scroll.Visible=false copyBox.Visible=true
+    copyBox:CaptureFocus()
+    copyBox.SelectionStart = 1
+    copyBox.CursorPosition = #copyBox.Text + 1
+end)
+
+-- ── Helper ────────────────────────────────────────────────────────
+local copyLines = {}
+local order = 0
+local C = {
+    Y = Color3.fromRGB(255,210,0), G = Color3.fromRGB(80,255,120),
+    B = Color3.fromRGB(140,160,255), O = Color3.fromRGB(255,160,50),
+    W = Color3.fromRGB(210,210,210), S = Color3.fromRGB(140,140,140),
+}
+local function addLine(txt, col)
+    order += 1
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -12, 0, 15)
+    lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.Code lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.TextColor3 = col or C.W
+    lbl.Text = txt lbl.LayoutOrder = order
+    lbl.Parent = scroll
+    table.insert(copyLines, txt)
+    copyBox.Text = table.concat(copyLines, "\n")
+    scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+end
+
+-- ── Scan ──────────────────────────────────────────────────────────
+local function getItemsFolder()
+    local ok, f = pcall(function()
+        return workspace.CurrentRoom.StoryboardMap:FindFirstChild("Items")
+    end)
+    if ok and f then return f end
+    for _, o in pairs(workspace:GetDescendants()) do
+        if o:IsA("Folder") and o.Name == "Items"
+           and o.Parent and o.Parent.Name == "StoryboardMap" then return o end
+    end
+    return nil
+end
+
+-- หา model แม่ของ prompt (ตัวที่มีชื่อความหมาย)
+local function ownerModel(pp)
+    local cur = pp
+    while cur and cur.Parent and cur ~= workspace do
+        if cur:IsA("Model") or cur:IsA("Folder") then return cur end
+        cur = cur.Parent
+    end
+    return pp.Parent
+end
+
+local function doScan()
+    for _, ch in pairs(scroll:GetChildren()) do
+        if ch:IsA("TextLabel") then ch:Destroy() end
+    end
+    copyLines = {} order = 0
+
+    task.spawn(function()
+        task.wait(0.05)
+        addLine("=== DW05 ITEM SPY v2.0 ===", C.Y)
+        addLine("", C.S)
+
+        local names = {}
+        local seenName = {}
+
+        -- วิธี 1: Items folder (ถ้ามี)
+        local f = getItemsFolder()
+        if f then
+            addLine("── Items folder: " .. f:GetFullName() .. " ──", C.Y)
+            for _, item in pairs(f:GetChildren()) do
+                addLine("  [" .. item.ClassName .. "] " .. item.Name, C.G)
+                if not seenName[item.Name] then
+                    seenName[item.Name] = true
+                    table.insert(names, item.Name)
+                end
+            end
+            addLine("", C.S)
+        else
+            addLine("⚠️ ไม่พบ Items folder → สแกน ProximityPrompt ทั้ง map", C.O)
+            addLine("", C.S)
+        end
+
+        -- วิธี 2: scan ProximityPrompt ทั้ง workspace (เจอทุกอย่างที่กดได้)
+        addLine("── ProximityPrompt ทั้งหมดใน workspace ──", C.Y)
+        local count = 0
+        local okScan = pcall(function()
+            for _, obj in pairs(workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then
+                    count += 1
+                    local owner = ownerModel(obj)
+                    local oname = owner and owner.Name or "?"
+                    local act = obj.ActionText ~= "" and obj.ActionText or "E"
+                    addLine("[" .. oname .. "] action=" .. act
+                            .. " hold=" .. tostring(obj.HoldDuration), C.G)
+                    addLine("   " .. obj:GetFullName(), C.B)
+                    if not seenName[oname] then
+                        seenName[oname] = true
+                        table.insert(names, oname)
+                    end
+                end
+            end
+        end)
+        if not okScan then addLine("scan error", C.O) end
+        addLine("", C.S)
+        addLine("เจอ ProximityPrompt: " .. count .. " ตัว", C.S)
+        addLine("", C.S)
+
+        -- สรุปชื่อ
+        addLine("=== ชื่อทั้งหมด (เลือกที่เป็น item) ===", C.Y)
+        for _, n in pairs(names) do
+            addLine('    "' .. n .. '",', C.G)
+        end
+
+        titleLbl.Text = "DW Item Spy v2.0 — prompt: " .. count
+    end)
+end
+
+rescanBtn.MouseButton1Click:Connect(doScan)
+doScan()
+
+warn("[DW05] Item Spy v2.0 — ดูชื่อ Item ทั้งหมดใน Items folder")
