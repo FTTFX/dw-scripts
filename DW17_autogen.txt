@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.36
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.35
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -27,7 +27,7 @@ local CFG = {
     LOOP_INTERVAL    = 0.08,  -- throttle logic ทุกกี่วิ
     -- gen work — DW16 skillcheck = แกนหลักในการเติม | prompt แค่ "เริ่มสกัด"
     GEN_STALL        = 1.5,   -- ถ้า CurrentAmount ไม่ขึ้นเกินนี้ (วิ) → fire prompt ซ้ำ (re-เริ่มสกัด)
-    MOUNT_TIMEOUT    = 2.0,   -- v4.36: ถึงเครื่องแล้วขึ้นไม่ติดเกินนี้ (วิ) = มีบอทตัวอื่นจอง → ทิ้งไปตัวอื่น (กันชน/ยืนรอ)
+    MOUNT_TIMEOUT    = 0.1,   -- v4.36: ถึงเครื่องแล้วขึ้นไม่ติดเกินนี้ (วิ) = มีบอทตัวอื่นจอง → ทิ้งไปตัวอื่น (กันชน/ยืนรอ)
     GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
     HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
     MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
@@ -1622,7 +1622,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.36 [H]"
+titleLbl.Text = "DW Auto Gen v4.35 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1721,6 +1721,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.36 loaded — multi-bot: mount timeout 2s ทิ้งไปตัวอื่น (กันชน) + ELEV unstick/verify (วาปลิฟต์แม่น)")
+warn("[DW17] Auto Gen v4.35 loaded — heal คิดเป็น %เลือด (ลด 1 ใจ=Bandage, ≥2 ใจ=Med) ไม่ใช่ HP ดิบ")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
