@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.27
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.28
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -577,7 +577,9 @@ function COLLECT.getAvailableItems(names)
                 seen[item] = true
                 local allowed = #names == 0
                 if not allowed then
-                    for _, n in pairs(names) do if item.Name == n then allowed = true break end end
+                    -- v4.28: match แบบ keyword (substring, ไม่สนตัวพิมพ์) — "Cable" เจอ "Jumper Cable", "Bandage" เจอ "Bandages"
+                    local iname = item.Name:lower()
+                    for _, n in pairs(names) do if iname:find(n:lower(), 1, true) then allowed = true break end end
                 end
                 if allowed and item.Parent then
                     local prompt
@@ -1323,6 +1325,10 @@ local conn = RS.Heartbeat:Connect(function()
     local nd = entry and entry:FindFirstChild("NoDecode")
     local seenNow = nd and nd:IsA("BoolValue") and nd.Value
     if seenNow then STATE.seenUntil = tick() + CFG.SEEN_GRACE end
+    -- v4.28: ยังบินหนีอยู่ + มอนยังใกล้ (แนวราบ) → ต่อเวลา ไม่ลงไปโดนตีซ้ำ (ลงเฉพาะตอนมอนไปไกลแล้ว)
+    if STATE.seenUntil and tick() < STATE.seenUntil + 1 and GEN.monsterNear(hrp.Position) then
+        STATE.seenUntil = tick() + CFG.SEEN_GRACE
+    end
     if STATE.seenUntil and tick() < STATE.seenUntil then
         GEN.releaseHold()
         GEN.forceStopDecode()   -- ยืนยันออกจากเครื่องจริง (server) ไม่งั้นโดนตีทั้งที่บินอยู่
@@ -1495,7 +1501,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.27 [H]"
+titleLbl.Text = "DW Auto Gen v4.28 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1594,6 +1600,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.27 loaded — done เชื่อ Stats.Completed (เลิกเดา cur>=req) → กลับไปจบเครื่องที่ทิ้งตอนเกือบเสร็จ")
+warn("[DW17] Auto Gen v4.28 loaded — บินหนีค้างจนมอนไปไกล (ไม่ลงโดนตีซ้ำ) + เก็บไอเทมแบบ keyword")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
