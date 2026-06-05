@@ -1,4 +1,4 @@
--- DW17_autogen.txt — Dandy's World Auto Generator v4.42
+-- DW17_autogen.txt — Dandy's World Auto Generator v4.43
 -- รวม: DW16 v1.7 (auto-skillcheck) + DW04 (warp+prompt) + DW02 (warp/noclip/grab/elevator)
 -- เป้าหมาย: วาปทำเครื่องทุกตัว → เก็บ Research → เข้าลิฟต์ทันที (ไม่รอเพื่อน)
 -- ⚠️ เกมมี Anti-Cheat (AntiCheatTrigger) — ใช้ด้วยความระวัง / account สำรอง
@@ -28,8 +28,9 @@ local CFG = {
     -- gen work — DW16 skillcheck = แกนหลักในการเติม | prompt แค่ "เริ่มสกัด"
     GEN_STALL        = 1.5,   -- ถ้า CurrentAmount ไม่ขึ้นเกินนี้ (วิ) → fire prompt ซ้ำ (re-เริ่มสกัด)
     MOUNT_TIMEOUT     = 1.5,  -- v4.37: fallback — ขึ้นไม่ติดเกินนี้ (วิ) = ทิ้งไปตัวอื่น (กันค้าง). อย่าต่ำกว่า ~1 (mount ใช้เวลา)
-    MOUNT_TAKEN_GRACE = 0.25, -- v4.42: ช่องถูกจอง (prompt ปิด) → ทิ้งเร็วแค่นี้ (0.4→0.25 ไวขึ้นสำหรับกองทัพบอท)
-    MOUNT_STAGGER     = 0.05, -- v4.42: กองทัพบอท — หน่วงยิง E ต่อตัว = (UserId%8)*ค่านี้ (0–0.35s) → ยิงเหลื่อมกัน ตัวมาทีหลังเห็นช่องหมุน=ทิ้ง
+    MOUNT_TAKEN_GRACE = 0.25, -- v4.42: ช่องถูกจอง (prompt ปิด, ยังไม่หมุน) → ทิ้งเร็วแค่นี้
+    MOUNT_PHANTOM_GRACE = 1.5, -- v4.43: กองทัพบอท — ช่องหมุน(shared=true) แต่เราไม่ได้สกัดจริง (dec:N + ไม่ทำ skillcheck) → ทิ้งภายในนี้
+                               --   (ต้อง > เวลา confirm ของตัวที่ชนะ: Decoding sync + skillcheck แรก ~1s กัน bail ตัวที่ชนะตอนเพิ่งขึ้น)
     GEN_STAND_OFFSET = Vector3.new(0, 3, 0),  -- ยืนตรงจุด prompt (Y=3 ยกขึ้นกัน HRP จมพื้น)
     HOVER_HEIGHT     = 100,   -- v4.14: 60→100 (มอน vertical hitbox สูง — 60 ยังโดนตี)
     MON_NEAR_GEN     = 45,    -- มอนใกล้เครื่องเกินนี้ = อันตราย (จูนปุ่มได้)
@@ -1152,7 +1153,7 @@ function GEN.work(hrp, target)
         STATE.workLastChange = tick()
         STATE.workStarted    = false
         STATE.mountTryStart  = nil   -- v4.36: reset ตัวจับเวลา mount (เครื่องใหม่)
-        STATE.slotArriveSpin = nil   -- v4.42: reset "ช่องหมุนก่อนเรายิงไหม" (capture ใหม่ตอนถึงเครื่องนี้)
+        STATE.lastSkillActive = nil  -- v4.43: reset "เพิ่งทำ skillcheck เครื่องนี้" (per-player mount signal — กัน GUI ค้างจากเครื่องเก่า)
     end
 
     STATE.curGenName = target.gen.Name
@@ -1170,53 +1171,37 @@ function GEN.work(hrp, target)
         status("➡️ ไปเครื่อง " .. target.gen.Name .. (target.slot and (" [ช่อง"..target.slot.."]") or ""))
         return
     end
-    -- ── ขึ้นเครื่องแล้วยัง (mounted)? ──
-    -- v4.38: Decoding ต้องชี้ "เครื่องนี้" (per-player — แม่นกว่า Slot{N}Spinning ที่เป็น attr "ของเครื่อง"/shared)
-    -- v4.42: กองทัพบอท — Slot{N}Spinning shared ทุกตัวเห็น true เหมือนกัน → ตัวที่แพ้ก็คิดว่า mounted → ยืนแช่
-    --   stagger: ยิง E เหลื่อมเวลา (UserId%8) → ตัวมาทีหลังเห็น "ช่องหมุนก่อนตนยิง" = คนอื่นแย่ง → ทิ้ง
+    -- ── ขึ้นเครื่องแล้วยัง (mounted)? ── v4.43: ตัดสินด้วยสัญญาณ "per-player" เท่านั้น
+    --   ⚠️ Slot{N}Spinning เป็น attr "ของเครื่อง" (SHARED) — ตัวที่แพ้ในกองทัพบอทก็เห็น true → ใช้ยืนยัน mount ไม่ได้ (=เหตุยืนแช่)
+    --   per-player ที่เชื่อได้: (1) player.Decoding ชี้เครื่องนี้  (2) เพิ่งมี skillcheck GUI ของเราเอง (สกัดจริงเท่านั้นถึงโผล่)
     local dec = GEN.serverDecoding()
     local onThisGen = (dec ~= nil) and (dec == target.gen or dec:IsDescendantOf(target.gen))
     local slotSpin  = (target.slot and target.gen:GetAttribute("Slot" .. target.slot .. "Spinning") == true) or false
+    if SKILL.find() ~= nil then STATE.lastSkillActive = tick() end   -- skillcheck GUI ของเราโผล่ = เราสกัดเครื่องนี้จริง
+    local skillRecent = (tick() - (STATE.lastSkillActive or 0)) < 3.0
 
-    STATE.mountTryStart = STATE.mountTryStart or tick()
-    -- รอคิวยิง: ยังไม่เคยยิง + ยังไม่ขึ้น + ช่องยังไม่หมุน + ยังไม่ถึงเวลา stagger ของตัวเรา → รอ
-    --   (ถ้าช่องหมุนระหว่างรอ = ตัวอื่นชนะ → ออกจากการรอทันที → capture slotArriveSpin=true → ทิ้ง)
-    local myStagger = (LP.UserId % 8) * CFG.MOUNT_STAGGER
-    if target.slot and not STATE.workStarted and not onThisGen and not slotSpin
-       and (tick() - STATE.mountTryStart) < myStagger then
-        status("⏳ รอคิวยิง " .. target.gen.Name .. " [ช่อง" .. target.slot .. "]")
-        return
-    end
-    -- capture ครั้งเดียว ตอน "ถึงคิวเรา": ช่องหมุนอยู่ก่อนเรายิงไหม (true = คนอื่นจับไปแล้ว = เราเป็น phantom)
-    if STATE.slotArriveSpin == nil then STATE.slotArriveSpin = slotSpin end
+    local mountedByMe  = onThisGen or skillRecent
+    local decodingThis = slotSpin or onThisGen   -- "ช่องหมุน" ใช้กัน re-fire (toggle ปิด) เท่านั้น — รวม shared spin ได้
 
-    -- mountedByMe = "เราขึ้นเครื่องนี้จริง" (ตัดสินทิ้ง/ไม่ทิ้ง) = Decoding ชี้เครื่องนี้ OR ช่องเพิ่งหมุนหลังเรายิง
-    -- decodingThis = "ช่องนี้หมุน" (กัน re-fire toggle เท่านั้น) — รวม shared spin
-    local mountedByMe, decodingThis
-    if target.slot then
-        mountedByMe  = onThisGen or (slotSpin and STATE.slotArriveSpin == false)
-        decodingThis = slotSpin or onThisGen
-    else
-        mountedByMe  = onThisGen
-        decodingThis = onThisGen
-    end
-    -- ช่องหมุนตั้งแต่ก่อนเรายิง + Decoding เราไม่ชี้เครื่องนี้ = โดนแย่ง → ทิ้งทันที (ไม่รอ grace)
-    local stolenByOther = target.slot and slotSpin and (STATE.slotArriveSpin == true) and not onThisGen
-
-    if mountedByMe and not stolenByOther then
+    if mountedByMe then
         STATE.mountTryStart = nil
     else
+        STATE.mountTryStart = STATE.mountTryStart or tick()
         local elapsed = tick() - STATE.mountTryStart
-        local takenByOther = stolenByOther or (target.prompt and target.prompt.Enabled == false)
-        if stolenByOther or (elapsed > CFG.MOUNT_TAKEN_GRACE and takenByOther) or (elapsed > CFG.MOUNT_TIMEOUT) then
+        local enabledOff = (target.prompt and target.prompt.Enabled == false)
+        -- v4.43: phantom กองทัพบอท — ช่องหมุน(shared=true) แต่เราไม่ได้สกัดจริง (mountedByMe=false)
+        --   = คนอื่นถือช่องนี้อยู่ → ทิ้ง (PHANTOM_GRACE เผื่อตัวที่ชนะตอนเพิ่งขึ้น Decoding/skillcheck ยังไม่มา)
+        local phantom = target.slot and slotSpin
+        if (phantom and elapsed > CFG.MOUNT_PHANTOM_GRACE)
+           or (enabledOff and not slotSpin and elapsed > CFG.MOUNT_TAKEN_GRACE)   -- ช่องปิดแต่ยังไม่หมุน = จองไว้ → ทิ้งเร็ว
+           or (elapsed > CFG.MOUNT_TIMEOUT) then
             STATE.genBlock[target.gen] = tick() + CFG.FLEE_COOLDOWN   -- บล็อกสั้นๆ กันรีบวกกลับ
-            STATE.workGenRef     = nil
-            STATE.workSlot       = nil
-            STATE.mountTryStart  = nil
-            STATE.slotArriveSpin = nil
+            STATE.workGenRef    = nil
+            STATE.workSlot      = nil
+            STATE.mountTryStart = nil
             GEN.releaseHold()
-            status((stolenByOther and "↪ ช่องถูกแย่ง → ไปเครื่องอื่น")
-                or (takenByOther and "↪ ช่องถูกจอง → ไปเครื่องอื่น") or "↪ ขึ้นไม่ติด → ไปเครื่องอื่น")
+            status((phantom and "↪ คนอื่นถือช่องนี้ → ไปเครื่องอื่น")
+                or (enabledOff and "↪ ช่องถูกจอง → ไปเครื่องอื่น") or "↪ ขึ้นไม่ติด → ไปเครื่องอื่น")
             return
         end
     end
@@ -1241,12 +1226,13 @@ function GEN.work(hrp, target)
 
     local slotTag = target.slot and (" [ช่อง" .. target.slot .. "]") or ""
     local tag = refire and " (re-สกัด)" or (stalled and " (รอ skillcheck)" or "")
-    -- v4.42: debug — E=prompt enabled, spin=ช่องหมุน, dec=player.Decoding ชี้เครื่องนี้(per-player), d=ระยะ
-    --   (dec:Y = mount per-player ติดจริง / spin:Y dec:N = แค่เห็น shared spin (อาจ phantom กองทัพบอท))
-    local dbg = string.format(" | E:%s spin:%s dec:%s d:%d",
+    -- v4.43: debug — E=prompt enabled, spin=ช่องหมุน(shared), dec=player.Decoding(per-player), sk=เพิ่งทำ skillcheck(per-player), d=ระยะ
+    --   spin:Y + dec:N + sk:N = phantom (คนอื่นถือช่อง เรายืนเฉย) → จะทิ้งภายใน PHANTOM_GRACE
+    local dbg = string.format(" | E:%s spin:%s dec:%s sk:%s d:%d",
         (target.prompt and target.prompt.Enabled) and "on" or "off",
         decodingThis and "Y" or "N",
         onThisGen and "Y" or "N",
+        ((tick() - (STATE.lastSkillActive or 0)) < 3.0) and "Y" or "N",
         math.floor((hrp.Position - standPos).Magnitude))
     if cur and req then
         status("⚙️ " .. target.gen.Name .. slotTag .. " " .. math.floor(curVal) .. "/" .. math.floor(req.Value)
@@ -1680,7 +1666,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.42 [H]"
+titleLbl.Text = "DW Auto Gen v4.43 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1779,6 +1765,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.42 loaded — กองทัพบอท: stagger ยิงเหลื่อม + ตัวที่แพ้ช่องทิ้งทันที (เลิกยืนแช่ 7 ตัว)")
+warn("[DW17] Auto Gen v4.43 loaded — กองทัพบอท: ตัดสิน mount ด้วย per-player (Decoding/skillcheck) ไม่เชื่อ SlotNSpinning ที่ shared → phantom ทิ้งจริง")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
