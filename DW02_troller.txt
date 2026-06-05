@@ -1,0 +1,1556 @@
+-- DW02_troller.txt — Dandy's World Twisted Troller v8.0
+-- โครงสร้าง Modular: แก้/test ทีละ module ได้
+-- Module list:
+--   CFG      → ค่า config ทั้งหมด
+--   STATE    → state variables ทั้งหมด
+--   WORLD    → หา folder / object ใน workspace
+--   MOVE     → noclip, lock position, removeFly
+--   TROLL    → หาเป้า + ล้อ Twisted
+--   ELEV     → elevator warp + countdown
+--   FLOOR    → detect floor change + reset
+--   DANGER   → Rodger/Razzle/Dazzle detection
+--   COLLECT  → เก็บ Item (stub รอ spy)
+--   HOTKEY   → [P] handler
+--   GUI      → build GUI
+--   LOOP     → Heartbeat main loop
+--   BOOT     → เริ่มระบบ
+
+-- ════════════════════════════════════════════════════════════════
+-- GUARD
+-- ════════════════════════════════════════════════════════════════
+if _G.DW02_CONNS then
+    for _, c in pairs(_G.DW02_CONNS) do pcall(function() c:Disconnect() end) end
+end
+pcall(function() if _G.DW02_BV then _G.DW02_BV:Destroy() end end)
+_G.DW02_CONNS = {}
+_G.DW02_ON    = true
+_G.DW02_BV    = nil
+
+local LP  = game.Players.LocalPlayer
+local RS  = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local VIM = game:GetService("VirtualInputManager")
+local PG  = LP:WaitForChild("PlayerGui")
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: CFG — แก้ค่าที่นี่ที่เดียว
+-- ════════════════════════════════════════════════════════════════
+local CFG = {
+    GEN_MIN_DIST      = 60,   -- ระยะเช็คมอน "ใกล้ Gen" → เข้า lure mode (ดึงออก) แทนการข้าม
+    TROLL_HEIGHT      = 25,   -- ลอยสูงเหนือ Twisted กี่ studs
+    -- LURE: มอนใกล้ Gen → ลอยฝั่งไกล Gen ให้มัน aggro เดินตามออกมา
+    LURE_OFFSET       = 12,   -- ห่างจากมอนเท่าไหร่ (studs) ในทิศตรงข้าม Gen | สั้น = aggro ติด, ยาว = lose aggro
+    LURE_TARGET_DIST  = 90,   -- ดึงจนมอนห่าง Gen ≥ นี้ studs → กลับล้อปกติ (ปลอดภัยแล้ว)
+    LURE_STEP_MAX     = 8,    -- ขยับจุด lure ไม่เกินกี่ studs ต่อ frame (เกินนี้ = มอนตามไม่ทัน lose aggro)
+    LOOP_INTERVAL     = 0.1,  -- วนล้อทุกกี่วิ
+    ELEV_TOTAL_TIME   = 25,   -- fallback local timer (ใช้เมื่อไม่มี PanicTimer)
+    TROLL_UNTIL       = 25,   -- PanicTimer > นี้ → ล้อต่อ
+    COLLECT_WHEN      = 24,   -- PanicTimer ≤ นี้ → เริ่มเก็บของ
+    ELEV_WARP_WHEN    = 20,   -- PanicTimer ≤ นี้ → วาปเข้าลิฟต์ครั้งแรก
+    ELEV_REWARP       = { 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6 },  -- วาปซ้ำที่แต่ละ threshold (กันหลุด)
+    ELEV_WARP_Y       = 7,    -- วาปสูงเหนือ ElevatorPrompt กี่ studs (กันมุดใต้พื้น)
+    DANGER_RISE       = 50,   -- ลอยขึ้นกี่ studs เมื่อ danger Twisted ตื่น
+    MOVE_THRESHOLD    = 1.5,  -- studs/0.5s ถือว่าขยับ (danger detection)
+    DANGER_NAMES      = { "rodger" },  -- ไม่ล้อ + ลอยหนีถ้าตื่น
+    IGNORE_NAMES      = { "blot", "connie" },  -- ไม่ล้อเฉยๆ (เจอก็ไม่เป็นไร ไม่ต้องหนี)
+    ITEM_NAMES        = { "ResearchCapsule" },  -- เก็บตอน panic (ก่อนขึ้นลิฟต์)
+    START_ITEM_NAMES  = { "Bandage", "Bandages", "Health Kit", "HealthKit", "Medkit", "MedKit" },  -- เก็บตอนเริ่มเกม ถ้ามี
+    ITEM_MONSTER_DIST = 18,   -- ถ้ามีมอนใกล้ item เกินนี้ → ไม่เก็บ (studs)
+    ITEM_UNDER        = 4,    -- วาปลงใต้ item กี่ studs ตอนเก็บ
+    COLLECT_DELAY     = 0.35, -- หน่วงก่อนกด E (ให้ตัวลงไปอยู่ใต้ item ก่อน)
+    -- Squirm avoidance (เลี่ยงก่อนโดนจับ)
+    SQUIRM_NAME       = "squirm",  -- keyword lowercase
+    SQUIRM_SAFE_DIST  = 30,   -- ระยะที่ถือว่า "ใกล้เกิน" (studs)
+    SQUIRM_DODGE_X    = 30,   -- หลบออก X กี่ studs
+    -- Universal grab escape (InGamePlayers.<player>.Grabbed — จาก DW09 spy)
+    -- โดนจับโดยมอนตัวไหนก็ได้ (Squirm/Scraps/Goob/อื่นๆ) → บินทะลุขึ้นหนี
+    GRAB_RISE         = 60,   -- บินทะลุขึ้นกี่ studs ตอนจะโดนจับ (สูงพ้นระยะ)
+    GRAB_RISE_TIME    = 3,    -- บินค้างกี่วิ แล้วกลับมาล้อ
+    -- Grab pre-dodge (มอนที่มี Grabbing BoolValue: Scraps/Goob/อื่นๆ)
+    GRAB_NEAR         = 80,   -- react เมื่อมอนที่จะจับ ใกล้กว่านี้ (studs) — เผื่อไว้
+    -- Razzle & Dazzle avoidance (ไม่อยู่ใกล้)
+    RAZZLE_NAMES      = { "razzle", "dazzle" },
+    RAZZLE_SAFE_DIST  = 30,   -- ห่าง Razzle&Dazzle อย่างน้อยกี่ studs (หลบแนวราบ)
+    -- Sprout tendril: Model "SproutTendril" ใน CurrentRoom.<Map>.FreeArea (ไม่ใช่ใน Monsters)
+    SPROUT_TENDRIL_KW = { "sprouttendril", "tendril" },
+    SPROUT_SAFE_DIST  = 22,   -- ห่างหนวด Sprout อย่างน้อยกี่ studs (หลบแนวราบ)
+    -- HEAL: หัวใจลด → กดเลขช่อง hotbar ใช้ item (Humanoid.Health/MaxHealth = จำนวนดวง)
+    HEAL_ENABLE        = true,
+    HEAL_BANDAGE_NAMES = { "bandage" },
+    HEAL_MEDKIT_NAMES  = { "medkit", "med kit", "health kit", "healthkit" },
+    HEAL_BANDAGE_SLOT  = nil,  -- บังคับช่อง ถ้าตั้ง | nil = หาเองจาก Inventory.SlotN.Value
+    HEAL_MEDKIT_SLOT   = nil,
+    HEAL_COOLDOWN      = 3,    -- กดใช้ heal ห่างกันกี่วิ
+    -- Fly mode (เดินบนอากาศเอง)
+    FLY_SPEED         = 35,   -- ความเร็วบิน (studs/วิ)
+}
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: STATE — state ทั้งหมดอยู่ที่นี่
+-- ════════════════════════════════════════════════════════════════
+local STATE = {
+    lockedCFrame   = nil,
+    lastStatus     = "waiting...",
+    targetIdx      = 1,
+    lastTick       = 0,
+    warpedToElev   = false,
+    lastSBMRef     = nil,
+    prevGenDone    = false,
+    pendingElevAt  = nil,   -- tick() ที่จะวาปลิฟต์ (P countdown)
+    hoverUntil     = nil,   -- true = กำลังลอยหนี danger
+    collectedOnGen = false,
+    -- cache
+    cachedMonsters   = nil,
+    cachedGenerators = nil,
+    -- danger
+    dangerWatchers    = {},
+    -- collect
+    collectBusy       = false,
+    collectStartAt    = nil,
+    -- lobby guard
+    seenActiveFloor   = false,  -- true เมื่อ FloorActive=true อย่างน้อย 1 ครั้ง
+    -- elevator local timer
+    genDoneAt         = nil,    -- tick() ที่ gen ครบ → เริ่มนับถอยหลัง local
+    warpedAt          = {},     -- threshold ที่วาปไปแล้ว (กันวาปซ้ำ threshold เดิม)
+    -- universal grab escape
+    grabRiseUntil     = nil,   -- tick() ที่จะเลิกบินหนีหลังโดนจับ
+    grabWatchers      = {},
+    grabbers          = {},    -- cache มอนที่มี Grabbing (สำหรับ poll ทุกเฟรม)
+    -- fly mode
+    flyMode           = false,
+    -- heal
+    lastHeal          = 0,
+}
+
+local function status(msg)
+    STATE.lastStatus = msg
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: WORLD — หา folder / object
+-- ════════════════════════════════════════════════════════════════
+local WORLD = {}
+
+function WORLD.getMonsters()
+    if STATE.cachedMonsters and STATE.cachedMonsters.Parent then
+        return STATE.cachedMonsters
+    end
+    -- ชื่อแมพเปลี่ยนทุกชั้น → หา Monsters folder ใต้ CurrentRoom แบบ dynamic
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local m = child:FindFirstChild("Monsters")
+            if m and m:IsA("Folder") then STATE.cachedMonsters = m return m end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Monsters" then
+            STATE.cachedMonsters = obj return obj
+        end
+    end
+    return nil
+end
+
+function WORLD.getGenerators()
+    if STATE.cachedGenerators and STATE.cachedGenerators.Parent then
+        return STATE.cachedGenerators
+    end
+    -- ชื่อแมพเปลี่ยนทุกชั้น → หา Generators folder ใต้ CurrentRoom แบบ dynamic
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local g = child:FindFirstChild("Generators")
+            if g and g:IsA("Folder") then STATE.cachedGenerators = g return g end
+        end
+    end
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Generators" then
+            STATE.cachedGenerators = obj return obj
+        end
+    end
+    return nil
+end
+
+-- หา map child ปัจจุบันใต้ CurrentRoom (ตัวที่มี Generators/Monsters)
+function WORLD.getMap()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if not cr then return nil end
+    for _, child in pairs(cr:GetChildren()) do
+        if child:FindFirstChild("Generators") or child:FindFirstChild("Monsters")
+           or child:FindFirstChild("Items") then
+            return child
+        end
+    end
+    return nil
+end
+
+function WORLD.allGeneratorsDone()
+    local ok, c  = pcall(function() return workspace.Info.GeneratorsCompleted.Value end)
+    local ok2, r = pcall(function() return workspace.Info.RequiredGenerators.Value end)
+    if ok and ok2 and r > 0 then return c >= r end
+    local gf = WORLD.getGenerators()
+    if not gf then return false end
+    local total, done = 0, 0
+    for _, g in pairs(gf:GetChildren()) do
+        local cv = g:FindFirstChild("Completed", true)
+        if cv and cv:IsA("BoolValue") then
+            total += 1
+            if cv.Value then done += 1 end
+        end
+    end
+    return total > 0 and done >= total
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: MOVE — noclip + lock position
+-- ════════════════════════════════════════════════════════════════
+local MOVE = {}
+
+function MOVE.applyNoclip(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = true end
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = false end
+    end
+end
+
+function MOVE.removeFly()
+    STATE.lockedCFrame = nil
+    pcall(function()
+        if _G.DW02_BV then _G.DW02_BV:Destroy() _G.DW02_BV = nil end
+    end)
+    local char = LP.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.PlatformStand = false end
+    for _, p in pairs(char:GetDescendants()) do
+        if p:IsA("BasePart") then p.CanCollide = true end
+    end
+end
+
+function MOVE.lockAt(cf)
+    STATE.lockedCFrame = cf
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if hrp then hrp.CFrame = cf end
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: ELEV — elevator
+-- ════════════════════════════════════════════════════════════════
+local ELEV = {}
+
+function ELEV.getCFrame()
+    local yOff = CFG.ELEV_WARP_Y
+    -- วิธี 1: workspace.Info.ElevatorPrompt (path จริงจาก DW06 scan)
+    local ok, cf = pcall(function()
+        local ep = workspace.Info.ElevatorPrompt
+        return CFrame.new(ep.Position + Vector3.new(0, yOff, 0))
+    end)
+    if ok and cf then return cf end
+    -- วิธี 2: scan Elevators folder
+    local ok2, cf2 = pcall(function()
+        local ef = workspace:FindFirstChild("Elevators")
+        if not ef then return nil end
+        for _, p in pairs(ef:GetDescendants()) do
+            if p:IsA("BasePart") then
+                return CFrame.new(p.Position + Vector3.new(0, yOff, 0))
+            end
+        end
+    end)
+    if ok2 and cf2 then return cf2 end
+    -- วิธี 3: fallback keyword scan
+    for _, p in pairs(workspace:GetDescendants()) do
+        local n = p.Name:lower()
+        if p:IsA("BasePart") and (n:find("elevator") or n:find("lift")) then
+            return CFrame.new(p.Position + Vector3.new(0, yOff, 0))
+        end
+    end
+    return nil
+end
+
+function ELEV.getCountdown()
+    -- PanicTimer = countdown จริง (ยืนยันแล้วว่าตรงกับเลขบนจอเป๊ะ)
+    local ok, v = pcall(function() return workspace.Info.PanicTimer.Value end)
+    if ok and type(v) == "number" and v > 0 then return v, "panic" end
+    return nil
+end
+
+function ELEV.isFloorActive()
+    local ok, v = pcall(function() return workspace.Info.FloorActive.Value end)
+    return ok and v == true
+end
+
+function ELEV.warp()
+    local cf = ELEV.getCFrame()
+    if cf then
+        -- วาปไป แล้ว removeFly ทันที → ยืนบนพื้นปกติ ไม่ลอย
+        local char = LP.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = cf end
+        MOVE.removeFly()
+        STATE.warpedToElev  = true
+        STATE.lockedCFrame  = nil   -- ไม่ lock → ยืนเองได้
+        STATE.pendingElevAt = nil
+        status("✅ วาปลิฟต์!")
+        warn("[DW02] วาปลิฟต์!")
+        return true
+    end
+    status("⚠️ หา Elevator ไม่เจอ")
+    return false
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: TROLL — หาเป้า + ล้อ
+-- ════════════════════════════════════════════════════════════════
+local TROLL = {}
+
+-- หา Gen ที่ใกล้ตำแหน่ง pos สุด (คืน pos ของ Gen + ระยะ)
+function TROLL.nearestGenPos(pos)
+    local gf = WORLD.getGenerators()
+    if not gf then return nil, math.huge end
+    local bestPos, bestD = nil, math.huge
+    for _, g in pairs(gf:GetDescendants()) do
+        if g:IsA("BasePart") then
+            local ok, gp = pcall(function() return g:GetPivot().Position end)
+            if ok then
+                local d = (pos - gp).Magnitude
+                if d < bestD then bestD = d bestPos = gp end
+            end
+        end
+    end
+    return bestPos, bestD
+end
+
+-- คืน 2 list: lureTargets (ใกล้ Gen → ดึงออก), farTargets (ห่าง Gen → ล้อเหนือหัวปกติ)
+function TROLL.getValidTargets()
+    local mf = WORLD.getMonsters()
+    if not mf then return {}, {}, "Monsters not found" end
+    local lure, far = {}, {}
+    for _, m in pairs(mf:GetChildren()) do
+        local hrp = m:FindFirstChild("HumanoidRootPart")
+        local hum = m:FindFirstChildOfClass("Humanoid")
+        if hrp and hum and hum.Health > 0 then
+            local genPos, genD = TROLL.nearestGenPos(hrp.Position)
+            if genPos and genD <= CFG.GEN_MIN_DIST then
+                table.insert(lure, { mon = m, hrp = hrp, genPos = genPos, genD = genD })
+            else
+                table.insert(far, m)
+            end
+        end
+    end
+    return lure, far, "OK"
+end
+
+function TROLL.isDanger(name)
+    local n = name:lower()
+    for _, kw in pairs(CFG.DANGER_NAMES) do
+        if n:find(kw) then return true end
+    end
+    return false
+end
+
+function TROLL.isSquirm(name)
+    return name:lower():find(CFG.SQUIRM_NAME) ~= nil
+end
+
+-- หา Squirm ที่ใกล้ผู้เล่นเกิน SQUIRM_SAFE_DIST
+function TROLL.getNearestSquirm(hrpPos)
+    local mf = WORLD.getMonsters()
+    if not mf then return nil end
+    for _, m in pairs(mf:GetChildren()) do
+        if TROLL.isSquirm(m.Name) then
+            local mHRP = m:FindFirstChild("HumanoidRootPart")
+            if mHRP then
+                local dist = (hrpPos - mHRP.Position).Magnitude
+                if dist < CFG.SQUIRM_SAFE_DIST then
+                    return m, mHRP, dist
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- หลบ Squirm ออกทาง X ±30 studs
+function TROLL.dodgeSquirm(hrp, squirmHRP)
+    -- หลบออกจาก Squirm ทาง X: ดูว่าผู้เล่นอยู่ด้าน + หรือ - ของ Squirm
+    local diffX = hrp.Position.X - squirmHRP.Position.X
+    local sign  = diffX >= 0 and 1 or -1   -- หลบออกทิศที่ห่างกว่าอยู่แล้ว
+    local cur   = STATE.lockedCFrame or hrp.CFrame
+    local newPos = Vector3.new(
+        squirmHRP.Position.X + CFG.SQUIRM_DODGE_X * sign,
+        cur.Position.Y,
+        cur.Position.Z
+    )
+    STATE.lockedCFrame = CFrame.new(newPos)
+    hrp.CFrame = STATE.lockedCFrame
+    status("🐛 Squirm! หลบ X" .. (sign > 0 and "+" or "") .. (CFG.SQUIRM_DODGE_X * sign))
+end
+
+-- หามอนที่ชื่อตรง keyword ใกล้ผู้เล่นเกิน dist
+function TROLL.getNearestByKW(hrpPos, kwList, dist)
+    local mf = WORLD.getMonsters()
+    if not mf then return nil end
+    for _, m in pairs(mf:GetChildren()) do
+        local n = m.Name:lower()
+        local match = false
+        for _, kw in pairs(kwList) do
+            if n:find(kw) then match = true break end
+        end
+        if match then
+            local mHRP = m:FindFirstChild("HumanoidRootPart")
+            if mHRP and (hrpPos - mHRP.Position).Magnitude < dist then
+                return m, mHRP
+            end
+        end
+    end
+    return nil
+end
+
+-- หาหนวด Sprout — path เปลี่ยนได้ (Workspace.SproutTendril หรือ CurrentRoom.<Map>.FreeArea)
+function TROLL.getNearestTendril(hrpPos)
+    local bestHRP, bd = nil, math.huge
+    local function scan(parent)
+        for _, ch in pairs(parent:GetChildren()) do
+            local n = ch.Name:lower()
+            for _, kw in pairs(CFG.SPROUT_TENDRIL_KW) do
+                if n:find(kw) then
+                    local part = ch:FindFirstChild("HumanoidRootPart") or ch:FindFirstChildWhichIsA("BasePart", true)
+                    if part then
+                        local d = (hrpPos - part.Position).Magnitude
+                        if d < CFG.SPROUT_SAFE_DIST and d < bd then bd = d bestHRP = part end
+                    end
+                    break
+                end
+            end
+        end
+    end
+    scan(workspace)   -- top-level: Workspace.SproutTendril
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, map in pairs(cr:GetChildren()) do
+            scan(map)
+            local fa = map:FindFirstChild("FreeArea")
+            if fa then scan(fa) end
+        end
+    end
+    return bestHRP, bd
+end
+
+-- หนีออกห่างแนวราบ (คงความสูงเดิม)
+function TROLL.fleeFrom(hrp, srcHRP, dist, label)
+    local away = hrp.Position - srcHRP.Position
+    away = Vector3.new(away.X, 0, away.Z)
+    if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+    away = away.Unit * dist
+    local keepY = (STATE.lockedCFrame or hrp.CFrame).Position.Y
+    local newPos = Vector3.new(srcHRP.Position.X + away.X, keepY, srcHRP.Position.Z + away.Z)
+    STATE.lockedCFrame = CFrame.new(newPos)
+    hrp.CFrame = STATE.lockedCFrame
+    status(label)
+end
+
+function TROLL.step(hrp)
+    -- ── 0. โดนจับ (Grabbed) → บินทะลุขึ้นค้าง 2 วิ แล้วกลับมาล้อ ──
+    if STATE.grabRiseUntil then
+        if tick() < STATE.grabRiseUntil then
+            -- ค้างที่ความสูง (escape ตั้ง lock ไว้แล้ว, noclip ทะลุกำแพง)
+            if STATE.lockedCFrame then hrp.CFrame = STATE.lockedCFrame end
+            local left = STATE.grabRiseUntil - tick()
+            status("🆘 หนีโดนจับ " .. string.format("%.1f", left) .. "s")
+            return
+        else
+            STATE.grabRiseUntil = nil   -- ครบเวลา → กลับมาล้อ
+        end
+    end
+
+    -- ── 1. เช็ค Squirm ใกล้เกิน → หลบก่อนโดนจับ ───────────────────
+    local squirm, squirmHRP = TROLL.getNearestSquirm(hrp.Position)
+    if squirm then
+        TROLL.dodgeSquirm(hrp, squirmHRP)
+        return
+    end
+
+    -- ── 1.5 เลี่ยง Razzle & Dazzle (ไม่อยู่ใกล้) ─────────────────
+    local rd, rdHRP = TROLL.getNearestByKW(hrp.Position, CFG.RAZZLE_NAMES, CFG.RAZZLE_SAFE_DIST)
+    if rd then
+        TROLL.fleeFrom(hrp, rdHRP, CFG.RAZZLE_SAFE_DIST, "💃 เลี่ยง Razzle&Dazzle")
+        return
+    end
+
+    -- ── 1.6 หลบหนวด Sprout (SproutTendril ใน FreeArea — ไม่ใช่ใน Monsters) ──
+    local tendHRP, tendD = TROLL.getNearestTendril(hrp.Position)
+    if tendHRP then
+        TROLL.fleeFrom(hrp, tendHRP, CFG.SPROUT_SAFE_DIST, "🌱 หลบหนวด Sprout (" .. math.floor(tendD) .. ")")
+        return
+    end
+
+    -- helper: เช็คว่ามอนตัวนี้ skip ไหม (danger/squirm/razzle/ignore)
+    local function skipMon(name)
+        if TROLL.isDanger(name) then return true end
+        if TROLL.isSquirm(name) then return true end
+        local n = name:lower()
+        for _, kw in pairs(CFG.RAZZLE_NAMES) do if n:find(kw) then return true end end
+        for _, kw in pairs(CFG.IGNORE_NAMES) do if n:find(kw) then return true end end
+        return false
+    end
+
+    -- ── 2. troll: lure ก่อน (ดึงมอนใกล้ Gen ออก) → ค่อยล้อมอนไกล ──
+    local lure, far, st = TROLL.getValidTargets()
+
+    -- ── 2a. LURE mode: มอนใกล้ Gen → ลอยฝั่งไกล Gen ให้มัน aggro ตาม ──
+    if #lure > 0 then
+        -- หามอนที่ใกล้ Gen สุด (ดึงตัวนี้ก่อน — อันตรายสุด)
+        local best, bestD = nil, math.huge
+        for _, e in pairs(lure) do
+            if not skipMon(e.mon.Name) and e.genD < bestD then
+                bestD = e.genD best = e
+            end
+        end
+        if best then
+            -- ทิศตรงข้ามจาก Gen (แนวราบ): Gen → Mon → จุดล่อ (เลย Mon ไปอีก)
+            local away = best.hrp.Position - best.genPos
+            away = Vector3.new(away.X, 0, away.Z)
+            if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+            away = away.Unit
+
+            -- จุดล่อ = ตำแหน่งมอน + offset ฝั่งไกล Gen + สูงขึ้น TROLL_HEIGHT
+            local target = best.hrp.Position
+                + away * CFG.LURE_OFFSET
+                + Vector3.new(0, CFG.TROLL_HEIGHT, 0)
+
+            -- ขยับ smooth: clamp ระยะต่อ frame กัน lose aggro
+            local cur = (STATE.lockedCFrame or hrp.CFrame).Position
+            local delta = target - cur
+            if delta.Magnitude > CFG.LURE_STEP_MAX then
+                delta = delta.Unit * CFG.LURE_STEP_MAX
+            end
+            local newPos = cur + delta
+            STATE.lockedCFrame = CFrame.new(newPos)
+            hrp.CFrame = STATE.lockedCFrame
+            status("🪝 lure " .. best.mon.Name
+                .. " | Gen " .. math.floor(best.genD) .. "→" .. CFG.LURE_TARGET_DIST)
+            return
+        end
+    end
+
+    -- ── 2b. ล้อปกติ (มอนห่าง Gen แล้ว) — round-robin เหนือหัว ────
+    if #far == 0 then
+        status(st .. " | ไม่มีเป้าไกล Gen")
+        return
+    end
+    if STATE.targetIdx > #far then STATE.targetIdx = 1 end
+    local monster = far[STATE.targetIdx]
+    STATE.targetIdx += 1
+    local monHRP = monster:FindFirstChild("HumanoidRootPart")
+    if not monHRP then return end
+    if skipMon(monster.Name) then return end
+
+    local cf = CFrame.new(monHRP.Position + Vector3.new(0, CFG.TROLL_HEIGHT, 0))
+    STATE.lockedCFrame = cf
+    hrp.CFrame = cf
+    status(monster.Name .. " | t:" .. #far .. " (lure:" .. #lure .. ")")
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: FLOOR — reset + detect floor change
+-- ════════════════════════════════════════════════════════════════
+local FLOOR = {}
+local _rushOut  -- forward declare
+
+function FLOOR.reset()
+    STATE.warpedToElev   = false
+    STATE.targetIdx      = 1
+    STATE.lockedCFrame   = nil
+    STATE.cachedMonsters = nil
+    STATE.cachedGenerators = nil
+    STATE.prevGenDone    = false
+    STATE.pendingElevAt  = nil
+    STATE.hoverUntil     = nil
+    STATE.collectedOnGen  = false
+    STATE.seenActiveFloor = false
+    STATE.genDoneAt        = nil
+    STATE.warpedAt         = {}
+    STATE.grabRiseUntil    = nil
+    STATE.grabbers         = {}
+    status("reset!")
+end
+
+function FLOOR.onNew(src)
+    FLOOR.reset()
+    _G.DW02_ON = true
+    warn("[DW02] ชั้นใหม่ (" .. src .. ") → reset")
+    _rushOut()
+end
+
+function FLOOR.watch()
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if not cr then return end
+    table.insert(_G.DW02_CONNS,
+        cr.ChildAdded:Connect(function(child)
+            if child.Name == "StoryboardMap" then
+                task.wait(1)
+                FLOOR.onNew("StoryboardMap")
+            end
+        end)
+    )
+    table.insert(_G.DW02_CONNS,
+        workspace.ChildAdded:Connect(function(child)
+            if child.Name == "CurrentRoom" then
+                task.wait(1)
+                FLOOR.onNew("CurrentRoom")
+                FLOOR.watch()
+            end
+        end)
+    )
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: DANGER — Rodger / Razzle / Dazzle detection
+-- ════════════════════════════════════════════════════════════════
+local DANGER = {}
+
+function DANGER.trigger(name)
+    if STATE.hoverUntil then return end
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    local cf = CFrame.new(hrp.Position + Vector3.new(0, CFG.DANGER_RISE, 0))
+    MOVE.lockAt(cf)
+    STATE.hoverUntil = true
+    status("⬆️ " .. name .. " ตื่น! +  " .. CFG.DANGER_RISE .. " studs")
+    warn("[DW02] " .. name .. " ตื่น → ลอยขึ้น " .. CFG.DANGER_RISE)
+end
+
+function DANGER.watch()
+    for _, c in pairs(STATE.dangerWatchers) do
+        pcall(function() c:Disconnect() end)
+    end
+    STATE.dangerWatchers = {}
+    local mf = WORLD.getMonsters()
+    if not mf then return end
+
+    for _, m in pairs(mf:GetChildren()) do
+        if not TROLL.isDanger(m.Name) then continue end
+        local hrpM = m:FindFirstChild("HumanoidRootPart")
+        if not hrpM then continue end
+
+        -- วิธี 1: BoolValue
+        for _, obj in pairs(m:GetDescendants()) do
+            local n = obj.Name:lower()
+            if obj:IsA("BoolValue") and
+               (n=="awake" or n=="active" or n=="activated"
+                or n=="alert" or n=="chasing" or n=="angry") then
+                local c = obj.Changed:Connect(function(v)
+                    if v then DANGER.trigger(m.Name) end
+                end)
+                table.insert(STATE.dangerWatchers, c)
+                table.insert(_G.DW02_CONNS, c)
+            end
+        end
+
+        -- วิธี 2: position delta poll
+        local lastPos = hrpM.Position
+        local pc; pc = RS.Heartbeat:Connect(function()
+            if tick() % 0.5 > 0.05 then return end
+            if not (hrpM and hrpM.Parent) then
+                pcall(function() pc:Disconnect() end) return
+            end
+            local delta = (hrpM.Position - lastPos).Magnitude
+            lastPos = hrpM.Position
+            if delta >= CFG.MOVE_THRESHOLD then DANGER.trigger(m.Name) end
+        end)
+        table.insert(STATE.dangerWatchers, pc)
+        table.insert(_G.DW02_CONNS, pc)
+    end
+
+    -- re-watch ถ้ามี monster ใหม่
+    local nc = mf.ChildAdded:Connect(function(child)
+        task.wait(0.2)
+        if TROLL.isDanger(child.Name) then DANGER.watch() end
+    end)
+    table.insert(STATE.dangerWatchers, nc)
+    table.insert(_G.DW02_CONNS, nc)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: GRAB — บินทะลุหนีตอนโดนจับ (InGamePlayers.<player>.Grabbed)
+--   universal: โดนมอนตัวไหนจับก็ true (Squirm/Scraps/Goob/อื่นๆ)
+-- ════════════════════════════════════════════════════════════════
+local GRAB = {}
+
+-- บินทะลุขึ้นหนี (จับเวลา GRAB_RISE_TIME วิ แล้วกลับมาล้อ)
+function GRAB.escape()
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    STATE.grabRiseUntil = tick() + CFG.GRAB_RISE_TIME
+    local cf = CFrame.new(hrp.Position + Vector3.new(0, CFG.GRAB_RISE, 0))
+    MOVE.lockAt(cf)
+    status("🆘 โดนจับ! บินทะลุขึ้น " .. CFG.GRAB_RISE)
+    warn("[DW02] Grabbed → บินทะลุ " .. CFG.GRAB_RISE .. " " .. CFG.GRAB_RISE_TIME .. "s")
+end
+
+-- hook BoolValue Grabbed
+function GRAB.hookGrabbed(val)
+    if not (val and val:IsA("BoolValue")) then return end
+    if val.Value then GRAB.escape() end
+    local c = val.Changed:Connect(function(v)
+        if v then GRAB.escape() end
+    end)
+    table.insert(STATE.grabWatchers, c)
+    table.insert(_G.DW02_CONNS, c)
+end
+
+-- proactive: ดักทุกมอนที่มี Grabbing BoolValue (Scraps/Goob/อื่นๆ)
+-- Grabbing=true ตอนเริ่มท่าจับ → บินขึ้นก่อนมือถึง
+function GRAB.watchGrabbers()
+    local mf = WORLD.getMonsters()
+    if not mf then return end
+    STATE.grabbers = {}   -- รีเซ็ต cache
+    for _, m in pairs(mf:GetChildren()) do
+        local grabbing = m:FindFirstChild("Grabbing")
+        if grabbing and grabbing:IsA("BoolValue") then
+            local mName = m.Name
+            -- เก็บ cache สำหรับ poll ทุกเฟรม
+            table.insert(STATE.grabbers, { m = m, val = grabbing })
+            -- event (เร็วสุด)
+            local c = grabbing.Changed:Connect(function(v)
+                if not v then return end
+                local char = LP.Character
+                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+                local mHRP = m:FindFirstChild("HumanoidRootPart")
+                if hrp and mHRP and
+                   (hrp.Position - mHRP.Position).Magnitude <= CFG.GRAB_NEAR then
+                    status("🦾 " .. mName .. " จะจับ! บินหนีก่อน")
+                    GRAB.escape()
+                end
+            end)
+            table.insert(STATE.grabWatchers, c)
+            table.insert(_G.DW02_CONNS, c)
+        end
+    end
+    -- re-watch ถ้ามีมอนใหม่
+    local nc = mf.ChildAdded:Connect(function(child)
+        task.wait(0.3)
+        if child:FindFirstChild("Grabbing") then GRAB.watchGrabbers() end
+    end)
+    table.insert(STATE.grabWatchers, nc)
+    table.insert(_G.DW02_CONNS, nc)
+end
+
+-- poll ทุกเฟรม เผื่อ Changed event พลาด (กันหลุด — ห้ามโดน)
+function GRAB.pollGrabbers()
+    if #STATE.grabbers == 0 then return end
+    local char = LP.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    for _, g in pairs(STATE.grabbers) do
+        if g.val and g.val.Parent and g.val.Value and g.m.Parent then
+            local mHRP = g.m:FindFirstChild("HumanoidRootPart")
+            if mHRP and (hrp.Position - mHRP.Position).Magnitude <= CFG.GRAB_NEAR then
+                GRAB.escape()
+                return
+            end
+        end
+    end
+end
+
+function GRAB.watch()
+    for _, c in pairs(STATE.grabWatchers) do
+        pcall(function() c:Disconnect() end)
+    end
+    STATE.grabWatchers = {}
+
+    GRAB.watchGrabbers()   -- proactive pre-dodge ทุกมอนที่มี Grabbing
+
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    if not igp then return end
+    local entry = igp:FindFirstChild(LP.Name)
+    if not entry then
+        -- ยังไม่มี entry → รอ spawn
+        local c = igp.ChildAdded:Connect(function(ch)
+            if ch.Name == LP.Name then task.wait(0.1) GRAB.watch() end
+        end)
+        table.insert(STATE.grabWatchers, c)
+        table.insert(_G.DW02_CONNS, c)
+        return
+    end
+
+    -- hook Grabbed ที่มีอยู่
+    GRAB.hookGrabbed(entry:FindFirstChild("Grabbed"))
+    -- hook Grabbed ที่เพิ่งถูกสร้าง (โดนจับครั้งใหม่)
+    local c = entry.ChildAdded:Connect(function(ch)
+        if ch.Name == "Grabbed" then
+            task.wait()
+            GRAB.hookGrabbed(ch)
+        end
+    end)
+    table.insert(STATE.grabWatchers, c)
+    table.insert(_G.DW02_CONNS, c)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: COLLECT — เก็บ Item (stub รอ CFG.ITEM_NAMES)
+-- ════════════════════════════════════════════════════════════════
+local COLLECT = {}
+
+function COLLECT.getItemsFolder()
+    -- ชื่อแมพเปลี่ยนทุกชั้น (StoryboardMap/RainbowHallways1/SproutMap...)
+    -- → หา Items folder ใต้ CurrentRoom แบบ dynamic
+    local cr = workspace:FindFirstChild("CurrentRoom")
+    if cr then
+        for _, child in pairs(cr:GetChildren()) do
+            local items = child:FindFirstChild("Items")
+            if items and items:IsA("Folder") then return items end
+        end
+    end
+    -- fallback: หา Folder ชื่อ Items ที่ไหนก็ได้ใน workspace
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") and obj.Name == "Items" then return obj end
+    end
+    return nil
+end
+
+-- หา items ทั้งหมดที่มี ProximityPrompt ตอนนี้ (names = list ชื่อที่จะเก็บ)
+function COLLECT.getAvailableItems(names)
+    names = names or CFG.ITEM_NAMES
+    local list = {}
+    local seen = {}
+
+    -- วิธี 1: Items folder โดยตรง (เร็วกว่า)
+    local itemFolder = COLLECT.getItemsFolder()
+    if itemFolder then
+        for _, item in pairs(itemFolder:GetChildren()) do
+            if not seen[item] then
+                seen[item] = true
+                local allowed = #names == 0
+                if not allowed then
+                    for _, n in pairs(names) do
+                        if item.Name == n then allowed = true break end
+                    end
+                end
+                if allowed and item.Parent then
+                    local prompt = nil
+                    local pf = item:FindFirstChild("Prompt")
+                    if pf then prompt = pf:FindFirstChildWhichIsA("ProximityPrompt") end
+                    if not prompt then
+                        prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    end
+                    local part = item:FindFirstChildWhichIsA("BasePart", true)
+                    if prompt and part then
+                        table.insert(list, { item = item, prompt = prompt, part = part })
+                    end
+                end
+            end
+        end
+    end
+
+    -- วิธี 2: fallback scan workspace ถ้า folder ไม่เจอ
+    if #list == 0 and #names > 0 then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if not seen[obj] and obj:IsA("Model") then
+                for _, n in pairs(names) do
+                    if obj.Name == n then
+                        seen[obj] = true
+                        local prompt = nil
+                        local pf = obj:FindFirstChild("Prompt")
+                        if pf then prompt = pf:FindFirstChildWhichIsA("ProximityPrompt") end
+                        if not prompt then
+                            prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                        end
+                        local part = obj:FindFirstChildWhichIsA("BasePart", true)
+                        if prompt and part then
+                            table.insert(list, { item = obj, prompt = prompt, part = part })
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    return list
+end
+
+-- เช็คว่ามีมอนสเตอร์ใกล้ตำแหน่ง pos เกิน ITEM_MONSTER_DIST ไหม
+function COLLECT.monsterNear(pos)
+    local mf = WORLD.getMonsters()
+    if not mf then return false end
+    for _, m in pairs(mf:GetChildren()) do
+        local mHRP = m:FindFirstChild("HumanoidRootPart")
+        local hum  = m:FindFirstChildOfClass("Humanoid")
+        if mHRP and hum and hum.Health > 0 then
+            if (pos - mHRP.Position).Magnitude <= CFG.ITEM_MONSTER_DIST then
+                return true, m.Name
+            end
+        end
+    end
+    return false
+end
+
+function COLLECT.run(onDone, names)
+    if STATE.collectBusy then
+        if onDone then onDone() end
+        return
+    end
+    STATE.collectBusy = true
+    STATE.collectStartAt = tick()
+    task.spawn(function()
+        -- ครอบ pcall ทั้งหมด → ถ้า error ก็ปลด collectBusy เสมอ (กันค้าง)
+        local ok, err = pcall(function()
+        local char = LP.Character
+        local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local totalFound = 0
+        local maxPasses  = 10   -- วนสูงสุด 10 รอบ กันลูปไม่จบ
+        local pass       = 0
+
+        -- วนจนกว่าจะไม่มี item เหลือ หรือถึงเวลาวาปลิฟต์
+        repeat
+            pass += 1
+
+            -- หยุดทันทีถ้าวาปลิฟต์ไปแล้ว (main loop คุม timer)
+            if STATE.warpedToElev then break end
+
+            local items = COLLECT.getAvailableItems(names)
+            if #items == 0 then break end
+
+            status("🎒 pass " .. pass .. " | เจอ " .. #items .. " ชิ้น")
+
+            for _, entry in pairs(items) do
+                if STATE.warpedToElev then break end
+
+                if not entry.item.Parent then continue end
+                if not entry.part.Parent then continue end
+
+                -- เช็คมอนใกล้ item ก่อน → มี = ข้าม ไม่เสี่ยง
+                local near, mName = COLLECT.monsterNear(entry.part.Position)
+                if near then
+                    status("⚠️ ข้าม " .. entry.item.Name .. " (มี " .. mName .. " ใกล้)")
+                    continue
+                end
+
+                -- วาปลงใต้ item แล้วหน่วงให้ตัวลงไปอยู่ใต้จริง ก่อนกด E
+                MOVE.lockAt(CFrame.new(entry.part.Position + Vector3.new(0, -CFG.ITEM_UNDER, 0)))
+                task.wait(CFG.COLLECT_DELAY)
+                pcall(function() fireproximityprompt(entry.prompt) end)
+                task.wait(0.25)
+                totalFound += 1
+                status("🎒 (" .. totalFound .. ") " .. entry.item.Name)
+            end
+
+            task.wait(0.1)
+
+        until pass >= maxPasses
+
+        status(totalFound > 0
+            and ("✅ เก็บครบ " .. totalFound .. " ชิ้น")
+            or  "🎒 ไม่มี Item")
+        end)  -- ปิด pcall
+
+        if not ok then
+            warn("[DW02] COLLECT error: " .. tostring(err))
+            status("⚠️ collect error (ปลดล็อกแล้ว)")
+        end
+        STATE.collectBusy = false   -- ปลดเสมอ ไม่ว่า error หรือไม่
+        if onDone then onDone() end
+    end)
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: HEAL — หัวใจลด → กดเลขช่อง hotbar ใช้ Bandage/Med
+--   hotbar = PlayerGui.ScreenGui (ช่องมี TextLabel เลข + item) | กดเลข = ใช้
+-- ════════════════════════════════════════════════════════════════
+local HEAL = {}
+local SLOT_KEY = {
+    [1] = Enum.KeyCode.One,  [2] = Enum.KeyCode.Two,   [3] = Enum.KeyCode.Three,
+    [4] = Enum.KeyCode.Four, [5] = Enum.KeyCode.Five,
+}
+
+-- หาเลขช่องที่มี item ตรงชื่อ — อ่านจาก InGamePlayers.<เรา>.Inventory.SlotN.Value (ชื่อจริง)
+function HEAL.findSlot(names)
+    local igp = workspace:FindFirstChild("InGamePlayers")
+    local entry = igp and igp:FindFirstChild(LP.Name)
+    local inv = entry and entry:FindFirstChild("Inventory")
+    if not inv then return nil end
+    for n = 1, 6 do
+        local s = inv:FindFirstChild("Slot" .. n)
+        if s and s:IsA("ValueBase") then
+            local v = tostring(s.Value):lower()
+            if v ~= "" and v ~= "none" then
+                for _, nm in pairs(names) do
+                    if v:find(nm:lower()) then return n end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function HEAL.use(slot)
+    local key = SLOT_KEY[slot]
+    if not key then return end
+    task.spawn(function()
+        pcall(function()
+            VIM:SendKeyEvent(true,  key, false, game)
+            task.wait(0.06)
+            VIM:SendKeyEvent(false, key, false, game)
+        end)
+    end)
+end
+
+-- เช็คเลือด → ใช้ heal | current = Humanoid.Health (อัปเดตจริง) | max = Humanoid.MaxHealth
+function HEAL.check(char)
+    if not CFG.HEAL_ENABLE then return end
+    if tick() - (STATE.lastHeal or 0) < CFG.HEAL_COOLDOWN then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.MaxHealth <= 0 then return end
+    local missing = hum.MaxHealth - hum.Health
+    if missing < 1 then return end
+
+    local bSlot = CFG.HEAL_BANDAGE_SLOT or HEAL.findSlot(CFG.HEAL_BANDAGE_NAMES)
+    local mSlot = CFG.HEAL_MEDKIT_SLOT  or HEAL.findSlot(CFG.HEAL_MEDKIT_NAMES)
+    local slot, kind
+    if missing >= 2 then
+        slot, kind = (mSlot or bSlot), (mSlot and "Med" or "Bandage")
+    else
+        slot, kind = (bSlot or mSlot), (bSlot and "Bandage" or "Med")
+    end
+    if slot then
+        HEAL.use(slot)
+        STATE.lastHeal = tick()
+        status("❤️ heal " .. kind .. " ช่อง " .. slot .. " (ขาด " .. math.floor(missing) .. " ดวง)")
+    else
+        status("⚠️ ขาด " .. math.floor(missing) .. " ดวง แต่ไม่มี Bandage/Med ในช่อง")
+    end
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: RUSH — วาปออกจาก elevator ไปล้อทันที
+-- ════════════════════════════════════════════════════════════════
+local RUSH = {}
+
+function RUSH.out()
+    task.spawn(function()
+        task.wait(0.5)
+        _G.DW02_ON = true
+        DANGER.watch()
+        GRAB.watch()
+        if not _G.DW02_ON then return end
+
+        -- เก็บ Bandage / Health Kit ตอนเริ่มเกม (ถ้ามี — ไม่มีก็ข้ามไปล้อ)
+        status("🎒 เช็ค Bandage/Health Kit...")
+        COLLECT.run(nil, CFG.START_ITEM_NAMES)
+    end)
+end
+
+_rushOut = RUSH.out  -- bind forward declare
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: HOTKEY — [P] handler
+-- ════════════════════════════════════════════════════════════════
+local HOTKEY = {}
+
+function HOTKEY.onP()
+    if not _G.DW02_ON then
+        _G.DW02_ON          = true
+        STATE.warpedToElev  = false
+        STATE.hoverUntil    = nil
+        STATE.pendingElevAt = nil
+        STATE.lockedCFrame  = nil
+        warn("[DW02] ON")
+    elseif STATE.warpedToElev then
+        STATE.warpedToElev  = false
+        STATE.lockedCFrame  = nil
+        STATE.pendingElevAt = nil
+        warn("[DW02] กลับมาล้อ (จาก elevator)")
+    elseif STATE.hoverUntil then
+        STATE.hoverUntil   = nil
+        STATE.lockedCFrame = nil
+        warn("[DW02] กลับมาล้อ (จาก hover)")
+    elseif STATE.pendingElevAt then
+        STATE.pendingElevAt = nil
+        status("ยกเลิกวาป")
+        warn("[DW02] ยกเลิก countdown")
+    else
+        STATE.pendingElevAt = tick() + 3
+        warn("[DW02] วาปลิฟต์ใน 3s")
+    end
+end
+
+table.insert(_G.DW02_CONNS,
+    UIS.InputBegan:Connect(function(inp, gpe)
+        if gpe then return end
+        if inp.KeyCode == Enum.KeyCode.P then HOTKEY.onP() end
+        if inp.KeyCode == Enum.KeyCode.F then
+            STATE.flyMode = not STATE.flyMode
+            -- ไม่ reset lockedCFrame → fly ต่อจากตำแหน่ง/ความสูงเดิม (ไม่ตก)
+            warn("[DW02] Fly mode: " .. (STATE.flyMode and "ON" or "OFF"))
+        end
+    end)
+)
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: LOOP — Heartbeat main loop
+-- ════════════════════════════════════════════════════════════════
+local LOOP = {}
+
+function LOOP.tick_FloorChange(genDoneNow)
+    -- map poll (ชื่อแมพเปลี่ยนทุกชั้น → ใช้ getMap dynamic)
+    local curSBM = WORLD.getMap()
+    if curSBM ~= STATE.lastSBMRef then
+        if STATE.lastSBMRef ~= nil then
+            FLOOR.onNew("poll-map")
+        end
+        STATE.lastSBMRef = curSBM
+    end
+    -- gen state transition
+    if STATE.prevGenDone and not genDoneNow then
+        FLOOR.onNew("poll-gen")
+    end
+    STATE.prevGenDone = genDoneNow
+end
+
+-- countdown ที่เหลือ (วิ): ใช้ local timer เป็นหลัก (เชื่อถือได้ 100%)
+-- ถ้ามีค่า countdown จริงจากเกมและ > 0 → ใช้ค่าจริงแทน (แม่นกว่า)
+function LOOP.getRemaining()
+    -- อ่าน PanicTimer ดิบทุกครั้ง (บางแมพเพิ่ม/ลดได้ → ต้องอ่านสด)
+    local realCd, rsrc = ELEV.getCountdown()
+    if realCd then return realCd, (rsrc or "real") end
+    -- ไม่มี PanicTimer → fallback local timer
+    if STATE.genDoneAt then
+        local left = CFG.ELEV_TOTAL_TIME - (tick() - STATE.genDoneAt)
+        return left, "local"
+    end
+    return nil, "none"
+end
+
+function LOOP.tick_Elevator(hrp, genDoneNow)
+    -- ── manual P countdown ────────────────────────────────────────
+    if STATE.pendingElevAt then
+        local left = STATE.pendingElevAt - tick()
+        if left > 0 then
+            status("🚪 วาปลิฟต์ใน " .. math.ceil(left) .. "s (P=ยกเลิก)")
+            return true
+        end
+        ELEV.warp()
+        return true
+    end
+
+    -- ── ต้องมี RequiredGenerators > 0 (ยืนยันอยู่ในเกมจริง) ──────
+    local ok, reqGen = pcall(function() return workspace.Info.RequiredGenerators.Value end)
+    if not ok or not reqGen or reqGen <= 0 then return false end
+
+    -- ── trigger เฉพาะตอน gen ครบจริงเท่านั้น ─────────────────────
+    if not genDoneNow then
+        STATE.genDoneAt = nil
+        STATE.warpedAt  = {}
+        return false
+    end
+
+    -- gen เพิ่งครบ → เริ่มจับเวลา (fallback local)
+    if not STATE.genDoneAt then
+        STATE.genDoneAt = tick()
+    end
+
+    -- รอ PanicTimer settle 1.5 วิ ก่อนตัดสินใจ
+    -- (กันค่าแวบต่ำตอนเริ่ม panic → เก็บของ/วาปเร็วผิด)
+    if tick() - STATE.genDoneAt < 1.5 then
+        status("⏳ panic เริ่ม...")
+        return false   -- ล้อรอ PanicTimer นิ่งก่อน
+    end
+
+    local cd, src = LOOP.getRemaining()
+    if not cd then return false end
+
+    -- ── PanicTimer > 15 → ล้อต่อ ─────────────────────────────────
+    if cd > CFG.TROLL_UNTIL then
+        status("⏳ " .. math.floor(cd) .. "s [" .. (src or "?") .. "] | ล้อ")
+        return false   -- ไม่ block troll
+    end
+
+    -- ── PanicTimer ≤ 14 → เริ่มเก็บของ (ครั้งเดียว) ───────────────
+    if cd <= CFG.COLLECT_WHEN and not STATE.collectedOnGen and not STATE.collectBusy then
+        STATE.collectedOnGen = true
+        status("🎒 " .. math.floor(cd) .. "s — เก็บ Item!")
+        COLLECT.run(function()
+            -- เก็บเสร็จ → วาปเฉพาะถ้าถึงเวลาแล้ว (≤10) ไม่งั้นล้อรอต่อ
+            if not STATE.warpedToElev then
+                local cd2 = LOOP.getRemaining()
+                if cd2 and cd2 <= CFG.ELEV_WARP_WHEN then
+                    ELEV.warp()
+                    STATE.warpedAt[CFG.ELEV_WARP_WHEN] = true
+                end
+            end
+        end)
+        return true
+    end
+
+    -- ── PanicTimer ≤ 10 → วาปเข้าลิฟต์ครั้งแรก ───────────────────
+    if cd <= CFG.ELEV_WARP_WHEN then
+        if not STATE.warpedToElev then
+            ELEV.warp()
+            STATE.warpedAt[CFG.ELEV_WARP_WHEN] = true
+        end
+        return true
+    end
+
+    -- ── cd 10-14: เก็บเสร็จแล้วแต่ยังไม่ถึงเวลาวาป → ล้อรอต่อ ──────
+    if STATE.collectBusy then return true end   -- ยังเก็บอยู่ → block
+    return false   -- ล้อรอจนถึง ≤10
+end
+
+local conn = RS.Heartbeat:Connect(function(dt)
+    -- OFF state
+    if not _G.DW02_ON then
+        -- warpedToElev → ยืนเองในลิฟต์ ไม่ต้อง lock
+        if not STATE.warpedToElev then
+            MOVE.removeFly()
+        end
+        return
+    end
+
+    local char = LP.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- heal: หัวใจลด → กดเลขช่องใช้ Bandage/Med (throttle cooldown ภายใน)
+    HEAL.check(char)
+
+    -- ── Fly mode: เดินบนอากาศเอง (WASD แนวราบ ความสูงคงที่) ──────
+    if STATE.flyMode then
+        MOVE.applyNoclip(char)
+        if not STATE.lockedCFrame then STATE.lockedCFrame = hrp.CFrame end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        local dir = (hum and hum.MoveDirection) or Vector3.new(0, 0, 0)
+        -- เลื่อนเฉพาะแนวราบ (ตัด Y ออก → ความสูงคงที่ ปลอดภัย)
+        local flat = Vector3.new(dir.X, 0, dir.Z)
+        local move = flat * CFG.FLY_SPEED * (dt or 1/60)
+        STATE.lockedCFrame = STATE.lockedCFrame + move
+        hrp.CFrame = STATE.lockedCFrame
+        status("✈️ Fly (WASD แนวราบ) [F]")
+        return
+    end
+
+    -- poll Grabbing ทุกเฟรม (กันหลุด event → ห้ามโดนจับ)
+    if not STATE.warpedToElev then GRAB.pollGrabbers() end
+
+    local genDoneNow = WORLD.allGeneratorsDone()
+
+    -- ถ้า FloorActive=true → บันทึกว่าเข้าเกมจริงแล้ว
+    if ELEV.isFloorActive() then STATE.seenActiveFloor = true end
+
+    -- floor change check
+    LOOP.tick_FloorChange(genDoneNow)
+
+    -- ── วาปลิฟต์แล้ว → วาปซ้ำตาม threshold (กันหลุดออกมา) + ยืนพื้น ─
+    if STATE.warpedToElev then
+        local cd = ELEV.getCountdown()
+        if cd then
+            for _, t in ipairs(CFG.ELEV_REWARP) do
+                if cd <= t and not STATE.warpedAt[t] then
+                    STATE.warpedAt[t] = true
+                    ELEV.warp()   -- วาปซ้ำ ดึงกลับเข้าลิฟต์
+                    warn("[DW02] วาปซ้ำที่ " .. t .. "s")
+                end
+            end
+        end
+        MOVE.removeFly()   -- คืนสภาพ ยืนกับพื้น
+        return
+    end
+
+    -- ── กำลังเก็บของ → ให้ COLLECT คุม position อย่างเดียว ไม่ล้อ ──
+    -- กันชนกันระหว่าง COLLECT (ดึงไป item) กับ TROLL (ดึงไปล้อ)
+    if STATE.collectBusy then
+        -- safety: ถ้าค้างเกิน 12 วิ → ปลดล็อก (กัน freeze ทั้งระบบ)
+        if STATE.collectStartAt and tick() - STATE.collectStartAt > 12 then
+            STATE.collectBusy = false
+            warn("[DW02] collectBusy timeout → ปลดล็อก")
+        else
+            MOVE.applyNoclip(char)
+            if STATE.lockedCFrame then hrp.CFrame = STATE.lockedCFrame end
+            return
+        end
+    end
+
+    -- lock position ทุก frame
+    if not STATE.lockedCFrame then STATE.lockedCFrame = hrp.CFrame end
+    MOVE.applyNoclip(char)
+    hrp.CFrame = STATE.lockedCFrame
+
+    -- throttle logic หลัง lock
+    if tick() - STATE.lastTick < CFG.LOOP_INTERVAL then return end
+    STATE.lastTick = tick()
+
+    -- elevator / collect logic (สำคัญกว่า hover — ต้องเข้าลิฟต์ให้ได้)
+    if LOOP.tick_Elevator(hrp, genDoneNow) then return end
+
+    -- danger hover (เฉพาะตอนยังไม่ถึง elevator phase)
+    if STATE.hoverUntil then
+        status("⬆️ ลอยสูง " .. CFG.DANGER_RISE .. " studs")
+        return
+    end
+
+    -- troll step
+    TROLL.step(hrp)
+end)
+table.insert(_G.DW02_CONNS, conn)
+
+-- ════════════════════════════════════════════════════════════════
+-- MODULE: GUI
+-- ════════════════════════════════════════════════════════════════
+local GUI = {}
+
+function GUI.build()
+    pcall(function()
+        local old = LP.PlayerGui:FindFirstChild("DW02GUI")
+        if old then old:Destroy() end
+    end)
+
+    local gui = Instance.new("ScreenGui", LP.PlayerGui)
+    gui.Name = "DW02GUI"
+    gui.ResetOnSpawn = false
+
+    local frame = Instance.new("Frame", gui)
+    frame.Size = UDim2.new(0, 190, 0, 198)
+    frame.Position = UDim2.new(0, 10, 0.5, -99)
+    frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    frame.BorderSizePixel = 0
+    -- ไม่ใช้ frame.Draggable (มัน block click ปุ่มลูก) → ทำ drag เองที่ title
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+
+    -- Title (drag ได้ด้วยการลากตรงนี้)
+    local titleLbl = Instance.new("TextButton", frame)
+    titleLbl.Size = UDim2.new(1, 0, 0, 20)
+    titleLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    titleLbl.TextColor3 = Color3.fromRGB(255, 180, 0)
+    titleLbl.Text = "DW Troller v8.2  [P/F]"
+    titleLbl.Font = Enum.Font.Code
+    titleLbl.TextSize = 11
+    titleLbl.AutoButtonColor = false
+    titleLbl.BorderSizePixel = 0
+    Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
+
+    -- ── Custom drag (ลากที่ title เท่านั้น ปุ่มอื่น click ได้ปกติ) ──
+    do
+        local dragging, dragStart, startPos = false, nil, nil
+        titleLbl.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+               or input.UserInputType == Enum.UserInputType.Touch then
+                dragging  = true
+                dragStart = input.Position
+                startPos  = frame.Position
+            end
+        end)
+        titleLbl.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+               or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+            end
+        end)
+        table.insert(_G.DW02_CONNS,
+            UIS.InputChanged:Connect(function(input)
+                if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+                   or input.UserInputType == Enum.UserInputType.Touch) then
+                    local delta = input.Position - dragStart
+                    frame.Position = UDim2.new(
+                        startPos.X.Scale, startPos.X.Offset + delta.X,
+                        startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
+            end)
+        )
+    end
+
+    -- Status
+    local statLbl = Instance.new("TextLabel", frame)
+    statLbl.Size = UDim2.new(1, -4, 0, 16)
+    statLbl.Position = UDim2.new(0, 2, 0, 21)
+    statLbl.BackgroundTransparency = 1
+    statLbl.TextColor3 = Color3.fromRGB(100, 255, 100)
+    statLbl.Text = "ON"
+    statLbl.Font = Enum.Font.Code
+    statLbl.TextSize = 11
+
+    -- Info
+    local infoLbl = Instance.new("TextLabel", frame)
+    infoLbl.Size = UDim2.new(1, -4, 0, 14)
+    infoLbl.Position = UDim2.new(0, 2, 0, 37)
+    infoLbl.BackgroundTransparency = 1
+    infoLbl.TextColor3 = Color3.fromRGB(160, 160, 160)
+    infoLbl.Text = "..."
+    infoLbl.Font = Enum.Font.Code
+    infoLbl.TextSize = 10
+
+    -- Height label
+    local heightLbl = Instance.new("TextLabel", frame)
+    heightLbl.Size = UDim2.new(1, -4, 0, 14)
+    heightLbl.Position = UDim2.new(0, 2, 0, 53)
+    heightLbl.BackgroundTransparency = 1
+    heightLbl.TextColor3 = Color3.fromRGB(200, 200, 100)
+    heightLbl.Text = "Height: " .. CFG.TROLL_HEIGHT
+    heightLbl.Font = Enum.Font.Code
+    heightLbl.TextSize = 11
+
+    -- Height buttons
+    for _, b in pairs({
+        {label="-10", dx=0,   val=-10},
+        {label="-1",  dx=40,  val=-1},
+        {label="+1",  dx=80,  val=1},
+        {label="+10", dx=118, val=10},
+    }) do
+        local btn = Instance.new("TextButton", frame)
+        btn.Size = UDim2.new(0, 38, 0, 18)
+        btn.Position = UDim2.new(0, b.dx + 2, 0, 68)
+        btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.Text = b.label
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 11
+        btn.BorderSizePixel = 0
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+        local dv = b.val
+        btn.MouseButton1Click:Connect(function()
+            CFG.TROLL_HEIGHT = math.max(1, CFG.TROLL_HEIGHT + dv)
+            heightLbl.Text = "Height: " .. CFG.TROLL_HEIGHT
+        end)
+    end
+
+    -- Elevator button
+    local elevBtn = Instance.new("TextButton", frame)
+    elevBtn.Size = UDim2.new(1, -4, 0, 22)
+    elevBtn.Position = UDim2.new(0, 2, 0, 90)
+    elevBtn.BackgroundColor3 = Color3.fromRGB(30, 80, 180)
+    elevBtn.TextColor3 = Color3.new(1,1,1)
+    elevBtn.Text = "🛗 วาปเข้าลิฟต์"
+    elevBtn.Font = Enum.Font.Code
+    elevBtn.TextSize = 12
+    elevBtn.BorderSizePixel = 0
+    Instance.new("UICorner", elevBtn).CornerRadius = UDim.new(0, 4)
+    elevBtn.MouseButton1Click:Connect(function() ELEV.warp() end)
+
+    -- Collect button
+    local collectBtn = Instance.new("TextButton", frame)
+    collectBtn.Size = UDim2.new(1, -4, 0, 22)
+    collectBtn.Position = UDim2.new(0, 2, 0, 114)
+    collectBtn.BackgroundColor3 = Color3.fromRGB(80, 50, 10)
+    collectBtn.TextColor3 = Color3.fromRGB(255, 210, 80)
+    collectBtn.Text = "🎒 เก็บ Research/Med"
+    collectBtn.Font = Enum.Font.Code
+    collectBtn.TextSize = 11
+    collectBtn.BorderSizePixel = 0
+    Instance.new("UICorner", collectBtn).CornerRadius = UDim.new(0, 4)
+    collectBtn.MouseButton1Click:Connect(function() COLLECT.run(nil) end)
+
+    -- Fly button
+    local flyBtn = Instance.new("TextButton", frame)
+    flyBtn.Size = UDim2.new(1, -4, 0, 16)
+    flyBtn.Position = UDim2.new(0, 2, 0, 138)
+    flyBtn.BackgroundColor3 = Color3.fromRGB(20, 60, 70)
+    flyBtn.TextColor3 = Color3.fromRGB(120, 230, 255)
+    flyBtn.Text = "✈️ Fly mode [F]"
+    flyBtn.Font = Enum.Font.Code
+    flyBtn.TextSize = 10
+    flyBtn.BorderSizePixel = 0
+    Instance.new("UICorner", flyBtn).CornerRadius = UDim.new(0, 4)
+    flyBtn.MouseButton1Click:Connect(function()
+        STATE.flyMode = not STATE.flyMode
+        -- ไม่ reset lockedCFrame → fly ต่อจากตำแหน่งเดิม (ไม่ตก)
+        flyBtn.BackgroundColor3 = STATE.flyMode
+            and Color3.fromRGB(20, 120, 140)
+            or  Color3.fromRGB(20, 60, 70)
+    end)
+
+    -- OFF button
+    local offBtn = Instance.new("TextButton", frame)
+    offBtn.Size = UDim2.new(1, -4, 0, 16)
+    offBtn.Position = UDim2.new(0, 2, 0, 158)
+    offBtn.BackgroundColor3 = Color3.fromRGB(80, 20, 20)
+    offBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+    offBtn.Text = "[P] ON / OFF"
+    offBtn.Font = Enum.Font.Code
+    offBtn.TextSize = 10
+    offBtn.BorderSizePixel = 0
+    Instance.new("UICorner", offBtn).CornerRadius = UDim.new(0, 4)
+    offBtn.MouseButton1Click:Connect(function()
+        _G.DW02_ON = not _G.DW02_ON
+        if not _G.DW02_ON then MOVE.removeFly() end
+    end)
+
+    -- ปิดโปรแกรม button
+    local exitBtn = Instance.new("TextButton", frame)
+    exitBtn.Size = UDim2.new(1, -4, 0, 16)
+    exitBtn.Position = UDim2.new(0, 2, 0, 177)
+    exitBtn.BackgroundColor3 = Color3.fromRGB(40, 10, 10)
+    exitBtn.TextColor3 = Color3.fromRGB(200, 60, 60)
+    exitBtn.Text = "✖ ปิดโปรแกรม"
+    exitBtn.Font = Enum.Font.Code
+    exitBtn.TextSize = 10
+    exitBtn.BorderSizePixel = 0
+    Instance.new("UICorner", exitBtn).CornerRadius = UDim.new(0, 4)
+    exitBtn.MouseButton1Click:Connect(function()
+        -- หยุดทุกอย่าง
+        _G.DW02_ON = false
+        STATE.collectBusy   = false
+        STATE.warpedToElev  = false
+        STATE.lockedCFrame  = nil
+        STATE.hoverUntil    = nil
+        STATE.pendingElevAt = nil
+        STATE.flyMode       = false
+        -- disconnect connections ทั้งหมด
+        for _, c in pairs(_G.DW02_CONNS) do
+            pcall(function() c:Disconnect() end)
+        end
+        _G.DW02_CONNS = {}
+        -- disconnect danger + grab watchers
+        for _, c in pairs(STATE.dangerWatchers) do
+            pcall(function() c:Disconnect() end)
+        end
+        STATE.dangerWatchers = {}
+        for _, c in pairs(STATE.grabWatchers) do
+            pcall(function() c:Disconnect() end)
+        end
+        STATE.grabWatchers = {}
+        STATE.grabRiseUntil = nil
+        -- คืนสภาพ character
+        MOVE.removeFly()
+        -- ลบ GUI
+        gui:Destroy()
+        warn("[DW02] ปิดโปรแกรมแล้ว")
+    end)
+
+    -- GUI update loop
+    table.insert(_G.DW02_CONNS,
+        RS.Heartbeat:Connect(function()
+            if tick() % 0.5 < 0.05 then
+                statLbl.Text = (_G.DW02_ON and "ON" or "OFF") .. " | h=" .. CFG.TROLL_HEIGHT
+                statLbl.TextColor3 = _G.DW02_ON
+                    and Color3.fromRGB(100, 255, 100)
+                    or  Color3.fromRGB(255, 80, 80)
+                infoLbl.Text   = STATE.lastStatus
+                heightLbl.Text = "Height: " .. CFG.TROLL_HEIGHT
+            end
+        end)
+    )
+end
+
+-- ════════════════════════════════════════════════════════════════
+-- BOOT — เริ่มระบบ
+-- ════════════════════════════════════════════════════════════════
+table.insert(_G.DW02_CONNS,
+    LP.CharacterAdded:Connect(function()
+        STATE.targetIdx    = 1
+        STATE.lockedCFrame = nil
+        _G.DW02_BV         = nil
+    end)
+)
+
+FLOOR.watch()
+GUI.build()
+RUSH.out()
+
+warn("[DW02] v8.2 loaded — LURE: มอนใกล้ Gen → ลอยฝั่งไกล Gen ดึงมัน aggro ออกมา");
+warn("[DW02] [P]=troll toggle [F]=fly | drag ที่ title")
