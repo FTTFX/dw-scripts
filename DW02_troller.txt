@@ -41,9 +41,10 @@ local CFG = {
     -- LURE: มอนใกล้ Gen → ลอยฝั่งไกล Gen ให้มัน aggro เดินตามออกมา
     LURE_OFFSET       = 12,   -- ห่างจากมอนเท่าไหร่ (studs) ในทิศตรงข้าม Gen | สั้น = aggro ติด, ยาว = lose aggro
     LURE_TARGET_DIST  = 90,   -- ดึงจนมอนห่าง Gen ≥ นี้ studs → กลับล้อปกติ (ปลอดภัยแล้ว)
-    LURE_STEP_MAX     = 8,    -- ขยับจุด lure ไม่เกินกี่ studs ต่อ frame (เกินนี้ = มอนตามไม่ทัน lose aggro)
-    LURE_CHECK_LOS    = true, -- เช็ค raycast LoS — ถ้ามอนมีกำแพงกั้น → ข้าม (มันตามไม่ได้ ไร้ประโยชน์)
-    LURE_MAX_Y_DIFF   = 20,   -- มอน Y ต่างจากเรา > นี้ studs → ข้าม (คนละชั้น/ห้อง)
+    LURE_STEP_MAX     = 8,    -- DRAG step — ขยับจุด lure ไม่เกินกี่ studs/frame (กัน aggro หลุด)
+    LURE_APPROACH_STEP= 18,   -- APPROACH step — เข้าหามอนเร็วกว่า (ยังไม่มี aggro ให้รักษา)
+    LURE_CHECK_LOS    = true, -- เช็ค raycast LoS — ถ้ามีกำแพงกั้น → APPROACH (ไม่ใช่ข้าม) เพื่อเข้าหามอน
+    LURE_APPROACH_DIST= 15,   -- APPROACH สำเร็จเมื่อใกล้มอน ≤ นี้ studs → เริ่ม DRAG เลย (ไม่รอ LoS รอบถัดไป)
     LOOP_INTERVAL     = 0.1,  -- วนล้อทุกกี่วิ
     ELEV_TOTAL_TIME   = 25,   -- fallback local timer (ใช้เมื่อไม่มี PanicTimer)
     TROLL_UNTIL       = 25,   -- PanicTimer > นี้ → ล้อต่อ
@@ -525,50 +526,54 @@ function TROLL.step(hrp)
     -- ── 2. troll: lure ก่อน (ดึงมอนใกล้ Gen ออก) → ค่อยล้อมอนไกล ──
     local lure, far, st = TROLL.getValidTargets()
 
-    -- ── 2a. LURE mode: มอนใกล้ Gen → ลอยฝั่งไกล Gen ให้มัน aggro ตาม ──
+    -- ── 2a. LURE: มอนใกล้ Gen → 2-phase (APPROACH ↔ DRAG) ──
+    --   APPROACH (LoS หลุด): noclip ทะลุไปหามอนก่อน — step เร็ว ยังไม่ต้องรักษา aggro
+    --   DRAG     (LoS ผ่าน): ลากออกฝั่งไกล Gen — step ช้า กัน aggro หลุด
+    --   ถ้า DRAG แล้ว LoS หลุดอีก (ทะลุกำแพง) → ระบบ flip กลับเป็น APPROACH อัตโนมัติ
     if #lure > 0 then
-        -- หามอนที่ใกล้ Gen สุด + ตามได้จริง (ไม่มีกำแพงกั้น, ระดับชั้นเดียวกัน)
+        -- pick มอนใกล้ Gen สุด (ไม่ skip — จะลากเข้าหามันให้ได้)
         local best, bestD = nil, math.huge
-        local skipped = 0  -- นับตัวที่ข้ามเพราะกำแพง/คนละชั้น (debug)
         for _, e in pairs(lure) do
-            if skipMon(e.mon.Name) then continue end
-            -- ด่าน 1: Y delta — ต่างชั้น ตามไม่ได้
-            local yDiff = math.abs(e.hrp.Position.Y - hrp.Position.Y)
-            if yDiff > CFG.LURE_MAX_Y_DIFF then skipped += 1 continue end
-            -- ด่าน 2: LoS raycast — มีกำแพง ตามไม่ได้
-            if CFG.LURE_CHECK_LOS and TROLL.hasWallBetween(e.hrp, hrp.Position) then
-                skipped += 1 continue
+            if not skipMon(e.mon.Name) and e.genD < bestD then
+                bestD = e.genD best = e
             end
-            if e.genD < bestD then bestD = e.genD best = e end
         end
         if best then
-            -- ทิศตรงข้ามจาก Gen (แนวราบ): Gen → Mon → จุดล่อ (เลย Mon ไปอีก)
-            local away = best.hrp.Position - best.genPos
-            away = Vector3.new(away.X, 0, away.Z)
-            if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
-            away = away.Unit
+            local monPos = best.hrp.Position
+            local myDist = (monPos - hrp.Position).Magnitude
 
-            -- จุดล่อ = ตำแหน่งมอน + offset ฝั่งไกล Gen + สูงขึ้น TROLL_HEIGHT
-            local target = best.hrp.Position
-                + away * CFG.LURE_OFFSET
-                + Vector3.new(0, CFG.TROLL_HEIGHT, 0)
+            -- เช็ค LoS: ผ่าน = DRAG, ไม่ผ่าน = APPROACH (เว้นว่าใกล้มากแล้ว ≤ APPROACH_DIST)
+            local los_ok = (not CFG.LURE_CHECK_LOS)
+                or (myDist <= CFG.LURE_APPROACH_DIST)
+                or (not TROLL.hasWallBetween(best.hrp, hrp.Position))
 
-            -- ขยับ smooth: clamp ระยะต่อ frame กัน lose aggro
+            local target, stepMax, phaseLabel
+            if los_ok then
+                -- ── DRAG ── ลากออกฝั่งไกล Gen
+                local away = monPos - best.genPos
+                away = Vector3.new(away.X, 0, away.Z)
+                if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+                away = away.Unit
+                target = monPos + away * CFG.LURE_OFFSET + Vector3.new(0, CFG.TROLL_HEIGHT, 0)
+                stepMax = CFG.LURE_STEP_MAX
+                phaseLabel = "🪝 drag"
+            else
+                -- ── APPROACH ── วาปเข้าไปหามอน (noclip ทะลุได้)
+                target = monPos + Vector3.new(0, CFG.TROLL_HEIGHT, 0)
+                stepMax = CFG.LURE_APPROACH_STEP
+                phaseLabel = "🚶 approach (กำแพง→ทะลุไปหา)"
+            end
+
+            -- ขยับ smooth
             local cur = (STATE.lockedCFrame or hrp.CFrame).Position
             local delta = target - cur
-            if delta.Magnitude > CFG.LURE_STEP_MAX then
-                delta = delta.Unit * CFG.LURE_STEP_MAX
-            end
-            local newPos = cur + delta
-            STATE.lockedCFrame = CFrame.new(newPos)
+            if delta.Magnitude > stepMax then delta = delta.Unit * stepMax end
+            STATE.lockedCFrame = CFrame.new(cur + delta)
             hrp.CFrame = STATE.lockedCFrame
-            local skipStr = skipped > 0 and (" (กำแพง:" .. skipped .. ")") or ""
-            status("🪝 lure " .. best.mon.Name
-                .. " | Gen " .. math.floor(best.genD) .. "→" .. CFG.LURE_TARGET_DIST .. skipStr)
+
+            status(phaseLabel .. " " .. best.mon.Name
+                .. " | Gen " .. math.floor(best.genD) .. " | d:" .. math.floor(myDist))
             return
-        elseif skipped > 0 then
-            -- ทุกตัวกำแพงกั้น/คนละชั้น → ตามไม่ได้ ปล่อยไป (ล้อตัวไกลแทน)
-            status("⚠️ มอนใกล้ Gen " .. #lure .. " ตัว ติดกำแพงหมด → ล้อตัวอื่น")
         end
     end
 
@@ -1365,7 +1370,7 @@ function GUI.build()
     titleLbl.Size = UDim2.new(1, 0, 0, 20)
     titleLbl.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     titleLbl.TextColor3 = Color3.fromRGB(255, 180, 0)
-    titleLbl.Text = "DW Troller v8.3  [P/F]"
+    titleLbl.Text = "DW Troller v8.4  [P/F]"
     titleLbl.Font = Enum.Font.Code
     titleLbl.TextSize = 11
     titleLbl.AutoButtonColor = false
@@ -1589,5 +1594,5 @@ FLOOR.watch()
 GUI.build()
 RUSH.out()
 
-warn("[DW02] v8.3 loaded — LURE + LoS: เช็คกำแพง/คนละชั้น ก่อนดึง (กัน lose aggro)");
+warn("[DW02] v8.4 loaded — LURE 2-phase: APPROACH (ทะลุไปหา) ↔ DRAG (ลากออก)");
 warn("[DW02] [P]=troll toggle [F]=fly | drag ที่ title")
