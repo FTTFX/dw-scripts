@@ -1,31 +1,18 @@
--- 06RB ALL IN.txt — Frame-Perfect Aimbot + Movement (Unified)
--- Version: 3.4.0 "Follow Distance GUI"
--- H=ESP | Q=Shoot | E=Watch | T=TeamCheck | R=Rescan | F=Speed | G=Jump | P=Follow
+-- 01Forsaken.txt — Forsaken Helper v1.0 (Survivor + Killer auto-detect)
+-- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan | P=Follow
 --
--- v3.4.0:
---   * Follow system: ระยะห่าง (GOD_DIST) ปรับได้ผ่าน GUI -10/-1/+1/+10
---   * เพิ่มปุ่ม "Follow ON/OFF [P]" ใน GUI (ก่อนหน้านี้มีแค่ hotkey)
---   * Follow แสดงค่า dist ใน status button เมื่อ ON
+-- Auto-detect role per frame:
+--   Char.Name == Player.Name  → Survivor (เขียว) — Auto-Gen ทำงาน
+--   Char.Name ~= Player.Name  → Killer   (แดง)  — Watch/Aim ทำงาน
 --
--- v3.3.2:
---   * FIX: cacheLPChar เรียก updateShieldIgnoreList() ที่ define ทีหลัง → ตอนรันเป็น nil → crash
---     ทำให้ "อยู่ๆ ใช้ไม่ได้" (พังเมื่อ character โหลดอยู่แล้วตอนรัน)
---   * แก้ 2 ชั้น:
---     1) forward-declare: updateShieldIgnoreList / stopGodAnims / godWalkTrack / godJumpTrack
---     2) ⭐ ย้าย "การเรียก" cacheLPChar(LP.Character) ครั้งแรกไปท้ายไฟล์ (INIT)
---        — เพราะ forward-declare ทำให้เป็น upvalue nil อยู่ดี ถ้าเรียกก่อน define body
---
--- v3.3.1:
---   * God Mode เปลี่ยนจาก CFrame teleport → BodyPosition (ผลักด้วยฟิสิกส์)
---     - นุ่ม, เป็นธรรมชาติแบบฟิสิกส์, server detect ยากกว่า teleport
---     - P=1e4, D=1250 → ตามไว+ไม่สั่น, MaxForce=4e5 (override gravity)
---   * Cleanup BodyPosition ตอน toggle OFF + single-instance guard
-
---
--- v3.2.0:
---   * Merge 38RB_movement v3 เข้ามา (Speed BodyVelocity + Jump AssemblyLinearVelocity Impulse)
---   * GUI compact ขึ้น (ขนาด 130x300, ปุ่มเล็กลง)
---   * Factory defaults: ESP=ON Shoot=ON Watch=OFF Team=ON Speed=ON(31) Jump=ON(31)
+-- v1.0 (refactor จาก 06RB):
+--   - ลบ FPS logic ทั้งหมด (Shoot/Predict/PreAim/Shield/Jump)
+--   - เปลี่ยน prefix RB06 → FRSN
+--   - เพิ่ม role auto-detect + ESP แยกสี
+--   - เพิ่ม ESP Generator (cyan highlight)
+--   - เพิ่ม Auto-Gen (fireproximityprompt + วาปยืน)
+--   - Speed cap 35 (เกินนี้ revert)
+--   - Watch (E) คงไว้ — เล็ง Killer ตอนหนี / เล็ง Survivor ตอน Killer
 
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -33,37 +20,39 @@ local UIS        = game:GetService("UserInputService")
 local VIM
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
-local LP         = Players.LocalPlayer or Players.PlayerAdded:Wait()
-local Camera     = workspace.CurrentCamera
-local World      = workspace
+local LP     = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local Camera = workspace.CurrentCamera
+local World  = workspace
 
 -- ==================== LOCAL ALIASES ====================
-local math_clamp = math.clamp
-local math_min   = math.min
-local math_sqrt  = math.sqrt
-local math_max   = math.max
-local math_huge  = math.huge
-local v3_new     = Vector3.new
-local cf_lookAt  = CFrame.lookAt
-local clock      = os.clock
+local math_clamp, math_min, math_max, math_huge, math_sqrt =
+    math.clamp, math.min, math.max, math.huge, math.sqrt
+local v3_new    = Vector3.new
+local cf_lookAt = CFrame.lookAt
+local clock     = os.clock
 
 -- ==================== SINGLE-INSTANCE GUARD ====================
-if _G.RB06_CONNS then
-    for i = 1, #_G.RB06_CONNS do pcall(function() _G.RB06_CONNS[i]:Disconnect() end) end
-    for _, hl in pairs(_G.RB06_HL or {}) do pcall(function() hl:Destroy() end) end
+if _G.FRSN_CONNS then
+    for i = 1, #_G.FRSN_CONNS do
+        pcall(function() _G.FRSN_CONNS[i]:Disconnect() end)
+    end
+    for _, hl in pairs(_G.FRSN_HL or {}) do pcall(function() hl:Destroy() end) end
+    for _, hl in pairs(_G.FRSN_GEN_HL or {}) do pcall(function() hl:Destroy() end) end
     pcall(function()
-        local cg = game:GetService("CoreGui"):FindFirstChild("HLGUI")
+        local cg = game:GetService("CoreGui"):FindFirstChild("FRSNGUI")
         if cg then cg:Destroy() end
         local pg = LP and LP:FindFirstChild("PlayerGui")
-        if pg and pg:FindFirstChild("HLGUI") then pg.HLGUI:Destroy() end
+        if pg and pg:FindFirstChild("FRSNGUI") then pg.FRSNGUI:Destroy() end
     end)
-    if _G.RB06_BV then pcall(function() _G.RB06_BV:Destroy() end) end
-    if _G.RB06_GOD_BP then pcall(function() _G.RB06_GOD_BP:Destroy() end) end
+    if _G.FRSN_BV     then pcall(function() _G.FRSN_BV:Destroy()     end) end
+    if _G.FRSN_GOD_BP then pcall(function() _G.FRSN_GOD_BP:Destroy() end) end
 end
-_G.RB06_CONNS = {}
-_G.RB06_HL    = {}
-local CONNS      = _G.RB06_CONNS
-local Highlights = _G.RB06_HL
+_G.FRSN_CONNS  = {}
+_G.FRSN_HL     = {}    -- Player highlights
+_G.FRSN_GEN_HL = {}    -- Generator highlights
+local CONNS      = _G.FRSN_CONNS
+local Highlights = _G.FRSN_HL
+local GenHL      = _G.FRSN_GEN_HL
 
 local function bind(sig, fn)
     local c = sig:Connect(fn)
@@ -71,47 +60,37 @@ local function bind(sig, fn)
     return c
 end
 
--- ==================== STATE (Factory Defaults) ====================
-local ESPOn      = true
-local ShootOn    = false     -- ON by default
-local WatchOn    = false
-local TeamCheck  = true     -- ON by default
-local SPEED_ON   = false     -- ON by default
-local JUMP_ON    = false     -- ON by default
-local SPEED_VAL  = 20
-local JUMP_VAL   = 15
-local lastShot   = 0
-local FIRE_RATE  = 0
+-- ==================== STATE ====================
+local ESPOn     = true
+local WatchOn   = false
+local SPEED_ON  = false
+local AUTOGEN_ON = false
+local FOLLOW_ON  = false
+local FACELOCK_ON = false
 
--- God Mode (Anti-Hacker): P = วาปไปด้านบนศัตรูใกล้สุด
-local GOD_ON       = false
-local FACELOCK_ON  = false  -- O = หันหน้าเข้าหาศัตรูใกล้สุดเสมอ (กัน backstab)
-local GOD_OFFSET = 4    -- ห่างด้านข้าง (X) studs
-local GOD_HEIGHT = 150  -- สูงเหนือเป้า studs (จะลดถ้ามีเพดาน)
-local GOD_DIST       = 10   -- ระยะห่างตามหลังเพื่อน (studs) — ปรับได้ผ่าน GUI
--- Y clamp: ถ้าเพื่อนต่ำกว่าเรา → ลอยอยู่ที่ Y ปัจจุบันของเรา (ไม่ลงตาม) ถ้าเพื่อนสูงกว่า → ขึ้นตามไม่จำกัด
+local SPEED_VAL  = 28    -- max safe ~35 (เกินนี้เกม revert)
+local SPEED_MAX  = 35
+local FOLLOW_DIST = 8
+local lastTick   = 0
+local GEN_TICK   = 0
 
-local lockedPlayer = nil
-local lockedHead   = nil
-local lockedRoot   = nil
-local lockedHum    = nil
+-- Auto-gen state
+local autogenWarpedTo = nil      -- Gen model ที่กำลังทำอยู่
+local autogenPromptHold = false
 
--- ==================== NETCODE CONFIG ====================
-local NETCODE_MODE      = "CLIENT_HITREG"
-local BULLET_SPEED      = 1000
-local SHOOT_MAX_DIST    = 400
-local SHOOT_MAX_DIST_SQ = SHOOT_MAX_DIST * SHOOT_MAX_DIST
-local PREAIM_MAX_ITER   = 12
-local LOS_REFRESH_FRAMES= 2
+-- Watch state
+local lockedHead, lockedRoot, lockedHum, lockedPlayer = nil, nil, nil, nil
 
 -- ==================== Hot-loop caches ====================
 local LPHead, LPRoot, LPChar, LPHum = nil, nil, nil, nil
-local bv = nil  -- BodyVelocity for speed
+local bv = nil
 local viewportX, viewportY = 0, 0
+local IS_KILLER = false   -- updated ทุก frame ใน roleTick
 
 local pCacheHead = {}
 local pCacheRoot = {}
 local pCacheHum  = {}
+local pCacheRole = {}    -- "killer" | "survivor"
 local losCache   = {}
 
 local activeTargets = {}
@@ -125,13 +104,16 @@ end
 refreshViewport()
 bind(Camera:GetPropertyChangedSignal("ViewportSize"), refreshViewport)
 
--- ==================== FORWARD DECLARE (กัน forward-reference → เรียก nil) ====================
--- ฟังก์ชัน/ตัวแปรที่ถูกเรียกใน closure ก่อนถูก define จริงด้านล่าง
-local updateShieldIgnoreList
-local stopGodAnims
-local godWalkTrack, godJumpTrack
+-- ==================== Role detect (Forsaken pattern) ====================
+-- Char.Name == Player.Name → Survivor (Survivor outfit ใช้ display name)
+-- Char.Name ~= Player.Name → Killer  (Slasher/Jason/007n7/1x1x1x1/etc.)
+local function detectRole(player, char)
+    if not char then return "survivor" end
+    if char.Name == player.Name then return "survivor" end
+    return "killer"
+end
 
--- ==================== LP Char + BodyVelocity setup ====================
+-- ==================== LP Char + BodyVelocity ====================
 local function setupBV(char)
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -141,47 +123,34 @@ local function setupBV(char)
     bv.MaxForce = v3_new(0, 0, 0)
     bv.Velocity = v3_new(0, 0, 0)
     bv.Parent   = hrp
-    _G.RB06_BV  = bv
+    _G.FRSN_BV  = bv
 end
 
 local function cacheLPChar(char)
     LPChar = char
-    if not char then LPHead, LPRoot, LPHum = nil, nil, nil return end
+    if not char then LPHead, LPRoot, LPHum = nil, nil, nil; return end
     LPRoot = char:FindFirstChild("HumanoidRootPart")
     LPHead = char:FindFirstChild("Head")
     LPHum  = char:FindFirstChildOfClass("Humanoid")
     setupBV(char)
-    updateShieldIgnoreList()
+    IS_KILLER = detectRole(LP, char) == "killer"
 end
--- หมายเหตุ: เรียก cacheLPChar(LP.Character) ครั้งแรก "ทีหลัง" (ดูท้ายไฟล์ INIT)
--- เพราะมันเรียก updateShieldIgnoreList() ที่ define หลังจุดนี้ — เรียกตรงนี้ = nil crash
+
 bind(LP.CharacterAdded, function(c)
     task.wait(0.3)
     cacheLPChar(c)
-    -- รีเซ็ต animation track เมื่อ respawn (track เก่าใช้ไม่ได้แล้ว)
-    godWalkTrack = nil
-    godJumpTrack = nil
-    -- คืนค่า AutoRotate ตาม FaceLock state หลัง respawn
-    if LPHum then LPHum.AutoRotate = not FACELOCK_ON end
 end)
-bind(LP.CharacterRemoving, function() cacheLPChar(nil) stopGodAnims() end)
+bind(LP.CharacterRemoving, function() cacheLPChar(nil) end)
 
--- ==================== TeamCheck ====================
-local function getTeamID(p)
-    local id = p:GetAttribute("TeamID")
-    if id and id ~= "" then return id end
-    if p.Team then return "T_"..p.Team.Name end
-    return nil
-end
-
--- ==================== Highlight ====================
-local COL_ENEMY    = Color3.fromRGB(255, 50, 50)
-local COL_TEAMMATE = Color3.fromRGB(50, 255, 80)
+-- ==================== Highlight (ESP) ====================
+local COL_KILLER   = Color3.fromRGB(255,  50,  50)   -- แดง
+local COL_SURVIVOR = Color3.fromRGB( 50, 255,  80)   -- เขียว
+local COL_GEN_TODO = Color3.fromRGB(  0, 200, 255)   -- ฟ้า — gen ยังไม่เสร็จ
+local COL_GEN_DONE = Color3.fromRGB(120, 120, 120)   -- เทา — gen เสร็จแล้ว
 local COL_WHITE    = Color3.fromRGB(255, 255, 255)
 
-local function getColor(p, myID)
-    if TeamCheck and myID and getTeamID(p) == myID then return COL_TEAMMATE end
-    return COL_ENEMY
+local function colorFor(role)
+    return role == "killer" and COL_KILLER or COL_SURVIVOR
 end
 
 local function addHL(p)
@@ -190,9 +159,10 @@ local function addHL(p)
         pcall(function() Highlights[p.Name]:Destroy() end)
         Highlights[p.Name] = nil
     end
-    local myID = TeamCheck and getTeamID(LP) or nil
+    local role = detectRole(p, p.Character)
+    pCacheRole[p] = role
     local hl = Instance.new("Highlight")
-    hl.FillColor           = getColor(p, myID)
+    hl.FillColor           = colorFor(role)
     hl.OutlineColor        = COL_WHITE
     hl.FillTransparency    = 0.5
     hl.OutlineTransparency = 0
@@ -204,11 +174,14 @@ local function addHL(p)
 end
 
 local function rebuildColors()
-    local myID = TeamCheck and getTeamID(LP) or nil
     for i = 1, targetCount do
         local p = activeTargets[i]
-        local hl = Highlights[p.Name]
-        if hl then pcall(function() hl.FillColor = getColor(p, myID) end) end
+        if p.Character then
+            local role = detectRole(p, p.Character)
+            pCacheRole[p] = role
+            local hl = Highlights[p.Name]
+            if hl then pcall(function() hl.FillColor = colorFor(role) end) end
+        end
     end
 end
 
@@ -223,14 +196,17 @@ local function setAllEnabled(val)
     for _, hl in pairs(Highlights) do
         pcall(function() hl.Enabled = val end)
     end
+    for _, hl in pairs(GenHL) do
+        pcall(function() hl.Enabled = val end)
+    end
 end
 
--- ==================== Active targets incremental ====================
+-- ==================== Active targets ====================
 local function activeAdd(p)
     for i = 1, targetCount do
         if activeTargets[i] == p then return end
     end
-    targetCount = targetCount + 1
+    targetCount += 1
     activeTargets[targetCount] = p
 end
 
@@ -239,16 +215,14 @@ local function activeRemove(p)
         if activeTargets[i] == p then
             activeTargets[i] = activeTargets[targetCount]
             activeTargets[targetCount] = nil
-            targetCount = targetCount - 1
+            targetCount -= 1
             return
         end
     end
 end
 
--- ==================== Raycast filter ====================
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
 local function updateIgnoreList()
     local chars = {}
     if LPChar then chars[1] = LPChar end
@@ -259,50 +233,10 @@ local function updateIgnoreList()
     rayParams.FilterDescendantsInstances = chars
 end
 
--- ==================== Shield Detection ====================
--- raycast ชุดนี้ exclude แค่ตัวเราเอง → เจอ part ของศัตรู (รวม tool/shield) ได้
-local shieldRayParams = RaycastParams.new()
-shieldRayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local SHIELD_KEYWORDS = {"shield", "barrier", "wall", "block", "guard", "riot"}
-
-local function isShieldPart(inst)
-    if not inst then return false end
-    local name = inst.Name:lower()
-    for _, kw in ipairs(SHIELD_KEYWORDS) do
-        if name:find(kw) then return true end
-    end
-    -- เช็ค Tool ancestor (ถ้าโล่เป็น Tool)
-    local tool = inst:FindFirstAncestorOfClass("Tool")
-    if tool then
-        local tname = tool.Name:lower()
-        for _, kw in ipairs(SHIELD_KEYWORDS) do
-            if tname:find(kw) then return true end
-        end
-    end
-    return false
-end
-
-local function isShielded(fromPos, headPos)
-    local result = World:Raycast(fromPos, headPos - fromPos, shieldRayParams)
-    if not result then return false end          -- path โล่ง
-    if isShieldPart(result.Instance) then
-        return true                              -- โดนโล่งดัก
-    end
-    return false  -- โดนกำแพง/พื้น = แค่ไม่มี LOS ปกติ (ไม่ใช่โล่)
-end
-
-function updateShieldIgnoreList()
-    shieldRayParams.FilterDescendantsInstances = LPChar and {LPChar} or {}
-end
-
--- ==================== Player Cache ====================
 local function cacheChar(p, char)
     if not char then
-        pCacheHead[p] = nil
-        pCacheRoot[p] = nil
-        pCacheHum[p]  = nil
-        losCache[p]   = nil
+        pCacheHead[p], pCacheRoot[p], pCacheHum[p], pCacheRole[p] = nil, nil, nil, nil
+        losCache[p] = nil
         activeRemove(p)
         if lockedPlayer == p then
             lockedPlayer, lockedHead, lockedRoot, lockedHum = nil, nil, nil, nil
@@ -310,13 +244,11 @@ local function cacheChar(p, char)
         updateIgnoreList()
         return
     end
-    local head = char:FindFirstChild("Head")
-    local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-    local hum  = char:FindFirstChildOfClass("Humanoid")
-    pCacheHead[p] = head
-    pCacheRoot[p] = root
-    pCacheHum[p]  = hum
-    if head and root and hum then activeAdd(p) end
+    pCacheHead[p] = char:FindFirstChild("Head")
+    pCacheRoot[p] = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+    pCacheHum[p]  = char:FindFirstChildOfClass("Humanoid")
+    pCacheRole[p] = detectRole(p, char)
+    if pCacheHead[p] and pCacheRoot[p] and pCacheHum[p] then activeAdd(p) end
     updateIgnoreList()
 end
 
@@ -329,7 +261,7 @@ local function rescan()
             cacheChar(p, p.Character)
         end
     end
-    print("[06RB v3.2] Rescan:", targetCount, "players")
+    print("[FRSN] Rescan:", targetCount, "players")
 end
 
 local function setupPlayer(p)
@@ -347,22 +279,17 @@ local function setupPlayer(p)
         cacheChar(p, char)
     end)
     bind(p.CharacterRemoving, function() cacheChar(p, nil) end)
-    bind(p:GetAttributeChangedSignal("TeamID"), function()
-        if TeamCheck then rebuildColors() end
-    end)
 end
 
 for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
 bind(Players.PlayerAdded,    function(p) task.wait(0.3) setupPlayer(p) end)
-bind(Players.PlayerRemoving, function(p)
-    removeHL(p.Name)
-    cacheChar(p, nil)
-end)
+bind(Players.PlayerRemoving, function(p) removeHL(p.Name); cacheChar(p, nil) end)
 updateIgnoreList()
 
+-- Periodic re-check (heal lost highlights + role change)
 task.spawn(function()
     while task.wait(2) do
-        if not _G.RB06_CONNS or _G.RB06_CONNS ~= CONNS then return end
+        if not _G.FRSN_CONNS or _G.FRSN_CONNS ~= CONNS then return end
         if not ESPOn then continue end
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LP and p.Character then
@@ -370,164 +297,136 @@ task.spawn(function()
                 if not hl or not hl.Parent then addHL(p) end
                 local h = pCacheHead[p]
                 if not h or not h.Parent then cacheChar(p, p.Character) end
+                -- role-change detect (เปลี่ยน char glow → update สี)
+                local newRole = detectRole(p, p.Character)
+                if pCacheRole[p] ~= newRole then
+                    pCacheRole[p] = newRole
+                    if hl then pcall(function() hl.FillColor = colorFor(newRole) end) end
+                end
             end
         end
+        -- ตรวจ role ของเราเอง
+        if LPChar then IS_KILLER = detectRole(LP, LPChar) == "killer" end
     end
 end)
 
--- ==================== Predict + PreAim ====================
-local function predictHead(headPos, velX, velY, velZ, fromPos)
-    if NETCODE_MODE == "CLIENT_HITREG" or NETCODE_MODE == "LAG_COMP" then
-        return headPos
-    end
-    local ping = 0
-    local ok, p = pcall(LP.GetNetworkPing, LP)
-    if ok and p then ping = p end
-    local travelTime = ping * 2
-    if NETCODE_MODE == "SERVER_PROJECTILE" then
-        travelTime = travelTime + (fromPos - headPos).Magnitude / BULLET_SPEED
-    end
-    return headPos + v3_new(velX * travelTime, velY * 0.3 * travelTime, velZ * travelTime)
+-- ==================== GENERATOR scan + ESP ====================
+local cachedGens = {}    -- list ของ { model, prompt, part, completed? }
+local lastGenScan = 0
+
+local function isGenCompleted(genModel)
+    -- ลอง BoolValue Completed
+    local c = genModel:FindFirstChild("Completed", true)
+    if c and c:IsA("BoolValue") then return c.Value end
+    -- ลอง Attribute
+    local a = genModel:GetAttribute("Completed")
+    if type(a) == "boolean" then return a end
+    -- fallback: ดู Prompt.Enabled (เสร็จ → disabled)
+    local p = genModel:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if p then return not p.Enabled end
+    return false
 end
 
-local function getPreAimPosition(fromPos, headPos, velX, velZ)
-    local speedSq = velX*velX + velZ*velZ
-    if speedSq < 4 then return headPos end
-    local speed = math_sqrt(speedSq)
-    local step  = math_clamp(1 / speed, 0.04, 0.1)
-    local maxT  = math_min(0.8, step * PREAIM_MAX_ITER)
-    local flatVel = v3_new(velX, 0, velZ)
-    for t = step, maxT, step do
-        local checkPos = headPos + flatVel * t
-        if not World:Raycast(fromPos, checkPos - fromPos, rayParams) then
-            return checkPos
+local function scanGenerators()
+    -- path หลัก: Workspace.Map.Ingame.Map.Generator (หรือ Lobby.Interactive.Generator)
+    cachedGens = {}
+    local function tryScan(parent)
+        if not parent then return end
+        for _, ch in pairs(parent:GetChildren()) do
+            if ch.Name == "Generator" and ch:IsA("Model") then
+                local prompt = ch:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local part   = ch:FindFirstChildWhichIsA("BasePart", true)
+                if prompt and part then
+                    table.insert(cachedGens, { model = ch, prompt = prompt, part = part })
+                end
+            end
         end
     end
-    return headPos
+    pcall(function()
+        local map = workspace:FindFirstChild("Map")
+        if map then
+            local ig = map:FindFirstChild("Ingame")
+            if ig then
+                local m2 = ig:FindFirstChild("Map")
+                if m2 then tryScan(m2) end
+            end
+            local lobby = map:FindFirstChild("Lobby")
+            if lobby then
+                local int = lobby:FindFirstChild("Interactive")
+                if int then tryScan(int) end
+            end
+        end
+    end)
 end
 
-local frameCounter = 0
+local function rebuildGenHL()
+    for _, hl in pairs(GenHL) do pcall(function() hl:Destroy() end) end
+    table.clear(GenHL)
+    if not ESPOn then return end
+    for _, g in pairs(cachedGens) do
+        if g.model and g.model.Parent then
+            local hl = Instance.new("Highlight")
+            hl.FillColor    = isGenCompleted(g.model) and COL_GEN_DONE or COL_GEN_TODO
+            hl.OutlineColor = COL_WHITE
+            hl.FillTransparency    = 0.7
+            hl.OutlineTransparency = 0.2
+            hl.DepthMode    = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Adornee      = g.model
+            hl.Parent       = g.model
+            hl.Enabled      = ESPOn
+            table.insert(GenHL, hl)
+        end
+    end
+end
 
--- ==================== Target scan ====================
-local function findBestTarget(refreshLOS)
+-- ==================== Find Watch target (เป้าที่ตรงข้าม role) ====================
+-- Killer  → เล็ง Survivor ใกล้สุด
+-- Survivor→ เล็ง Killer   ใกล้สุด (เพื่อเตือน/หนี)
+local function findWatchTarget()
     if not LPRoot then return nil end
     local fromPos = LPRoot.Position
-    local fpx, fpy, fpz = fromPos.X, fromPos.Y, fromPos.Z
-    local myID = TeamCheck and getTeamID(LP) or nil
-
-    if lockedPlayer and lockedHum and lockedHum.Health > 0 and lockedHead and lockedRoot then
-        local rp = lockedRoot.Position
-        local dx, dy, dz = rp.X - fpx, rp.Y - fpy, rp.Z - fpz
-        if dx*dx + dy*dy + dz*dz <= SHOOT_MAX_DIST_SQ then
-            local hp = lockedHead.Position
-            if not World:Raycast(fromPos, hp - fromPos, rayParams) then
-                losCache[lockedPlayer] = true
-                -- LOS ยังอยู่ → คง lock ไว้ (ไม่สวิตช์แม้มีคนอื่นใกล้กว่า)
-                return lockedHead, true, lockedHead.AssemblyLinearVelocity, lockedPlayer
-            end
-            -- เป้าหลบแล้ว → clear lock → สวิตช์ไปคนถัดไปที่มี LOS
-        end
-        lockedPlayer, lockedHead, lockedRoot, lockedHum = nil, nil, nil, nil
-    end
-
-    local bestLOS_h, bestLOS_v, bestLOS_p
-    local bestAny_h, bestAny_v, bestAny_p
-    local bestLOS_dSq = SHOOT_MAX_DIST_SQ + 1
-    local bestAny_dSq = math_huge
-
+    local wantRole = IS_KILLER and "survivor" or "killer"
+    local bestHead, bestPlayer, bestDSq = nil, nil, math_huge
     for i = 1, targetCount do
         local p = activeTargets[i]
         local hum = pCacheHum[p]
-        if hum and hum.Health > 0 and not (myID and getTeamID(p) == myID) then
+        if hum and hum.Health > 0 and pCacheRole[p] == wantRole then
             local root = pCacheRoot[p]
             local head = pCacheHead[p]
-            local rp = root.Position
-            local dx, dy, dz = rp.X - fpx, rp.Y - fpy, rp.Z - fpz
-            local dSq = dx*dx + dy*dy + dz*dz
-
-            if dSq < bestAny_dSq then
-                bestAny_dSq, bestAny_h, bestAny_v, bestAny_p =
-                    dSq, head, head.AssemblyLinearVelocity, p
-            end
-
-            if dSq < bestLOS_dSq and dSq <= SHOOT_MAX_DIST_SQ then
-                local hasLOS
-                if refreshLOS or losCache[p] == nil then
-                    local hp = head.Position
-                    hasLOS = World:Raycast(fromPos, hp - fromPos, rayParams) == nil
-                    losCache[p] = hasLOS
-                else
-                    hasLOS = losCache[p]
-                end
-                if hasLOS then
-                    bestLOS_dSq, bestLOS_h, bestLOS_v, bestLOS_p =
-                        dSq, head, head.AssemblyLinearVelocity, p
+            if head and root then
+                local dx = root.Position.X - fromPos.X
+                local dy = root.Position.Y - fromPos.Y
+                local dz = root.Position.Z - fromPos.Z
+                local dSq = dx*dx + dy*dy + dz*dz
+                if dSq < bestDSq then
+                    bestDSq, bestHead, bestPlayer = dSq, head, p
                 end
             end
         end
     end
-
-    if bestLOS_h then return bestLOS_h, true,  bestLOS_v, bestLOS_p end
-    return            bestAny_h, false, bestAny_v, bestAny_p
+    return bestHead, bestPlayer, math_sqrt(bestDSq)
 end
 
-_G.RB06_FIND = function() return (findBestTarget(true)) end
-
--- ==================== Main loop (Aimbot + Speed) ====================
+-- ==================== Main loop ====================
 bind(RunService.RenderStepped, function()
-    -- Aim
-    if (ShootOn or WatchOn) and LPRoot then
-        frameCounter = frameCounter + 1
-        local refreshLOS = (frameCounter % LOS_REFRESH_FRAMES == 0)
-
-        local head, hasLOS, vel, targetPlayer = findBestTarget(refreshLOS)
+    -- Watch (aim เล็งเป้าตรงข้าม role)
+    if WatchOn and LPRoot then
+        local head, _, _ = findWatchTarget()
         if head then
-            local shielded = ShootOn and hasLOS and isShielded(LPRoot.Position, head.Position)
-            local canShoot = ShootOn and hasLOS and not shielded
-            -- Lock ทันทีที่เจอ LOS (sticky จาก findBestTarget จะคง lock จนเป้าหลบ)
-            if canShoot and targetPlayer then
-                lockedPlayer = targetPlayer
-                lockedHead   = head
-                lockedRoot   = pCacheRoot[targetPlayer]
-                lockedHum    = pCacheHum[targetPlayer]
-            end
-
-            local fromPos = LPRoot.Position
-            local aimPos
-            if canShoot then
-                aimPos = predictHead(head.Position, vel.X, vel.Y, vel.Z, fromPos)
-            elseif WatchOn then
-                aimPos = getPreAimPosition(fromPos, head.Position, vel.X, vel.Z)
-            end
-
-            if aimPos then
-                Camera.CFrame = cf_lookAt(Camera.CFrame.Position, aimPos)
-                if canShoot then
-                    local now = clock()
-                    if now - lastShot >= FIRE_RATE then
-                        lastShot = now
-                        if VIM then
-                            pcall(function()
-                                VIM:SendMouseButtonEvent(viewportX, viewportY, 0, true,  game, 0)
-                                VIM:SendMouseButtonEvent(viewportX, viewportY, 0, false, game, 0)
-                            end)
-                        end
-                    end
-                end
-            end
+            Camera.CFrame = cf_lookAt(Camera.CFrame.Position, head.Position)
         end
     end
-    -- (FaceLock ทำงานใน task แยก ด้านล่าง)
 end)
 
--- ==================== Speed loop (Heartbeat) ====================
+-- ==================== Speed loop ====================
 bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
     if SPEED_ON then
         local dir = LPHum.MoveDirection
         if dir.Magnitude > 0.1 then
+            local v = math_min(SPEED_VAL, SPEED_MAX)   -- cap 35
             bv.MaxForce = v3_new(1e5, 0, 1e5)
-            bv.Velocity = dir * SPEED_VAL
+            bv.Velocity = dir * v
         else
             bv.MaxForce = v3_new(0, 0, 0)
             bv.Velocity = v3_new(0, 0, 0)
@@ -538,42 +437,57 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
--- ==================== Follow Friend (Anti-Hacker) — P key ====================
--- ตามหลังเพื่อน (teammate) ที่ใกล้สุด ห่าง 10 studs ด้านหลัง
--- ใช้ BodyPosition (ผลักด้วยฟิสิกส์)
+-- ==================== AUTO-GEN loop (Survivor only) ====================
+-- หา gen ใกล้สุดที่ยังไม่เสร็จ → วาปไปยืน → กดค้าง E ผ่าน fireproximityprompt
+-- ⚠️ SkillCheck: ยังไม่ implement (รอ spy match จริงเพื่อหา UI element)
+bind(RunService.Heartbeat, function()
+    if not AUTOGEN_ON then return end
+    if IS_KILLER then return end   -- Killer ไม่ปั่น gen
+    if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
+    GEN_TICK += 1
+    if GEN_TICK % 6 ~= 0 then return end   -- ~10/วิ พอ
+
+    -- rescan ทุก 5 วิ
+    if clock() - lastGenScan > 5 then
+        scanGenerators()
+        rebuildGenHL()
+        lastGenScan = clock()
+    end
+
+    -- pick gen ใกล้สุดที่ยังไม่เสร็จ
+    local fromPos = LPRoot.Position
+    local best, bestD = nil, math_huge
+    for _, g in pairs(cachedGens) do
+        if g.model and g.model.Parent and not isGenCompleted(g.model) then
+            local d = (g.part.Position - fromPos).Magnitude
+            if d < bestD then bestD = d best = g end
+        end
+    end
+    if not best then return end
+
+    -- วาปไปยืนข้างเครื่อง + fire prompt
+    local genPos = best.part.Position
+    if bestD > 6 then
+        -- วาปเข้าไปใกล้
+        LPRoot.CFrame = CFrame.new(genPos + v3_new(0, 2, 3))
+    else
+        -- ใกล้แล้ว → fire prompt (กดค้าง)
+        pcall(function()
+            fireproximityprompt(best.prompt)
+        end)
+    end
+end)
+
+-- ==================== Follow Friend (Survivor) ====================
 local bpGod = nil
-
--- Animation tracks สำหรับ follow mode (forward-declared ด้านบนแล้ว)
-godWalkTrack = nil
-godJumpTrack = nil
-local GOD_ANIM_RUN  = "rbxassetid://507767714"  -- Roblox default run
-local GOD_ANIM_JUMP = "rbxassetid://507765000"  -- Roblox default jump
-
-local function loadGodAnims()
-    if not LPChar then return end
-    local hum = LPChar:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local aRun  = Instance.new("Animation"); aRun.AnimationId  = GOD_ANIM_RUN
-    local aJump = Instance.new("Animation"); aJump.AnimationId = GOD_ANIM_JUMP
-    godWalkTrack = hum:LoadAnimation(aRun)
-    godJumpTrack = hum:LoadAnimation(aJump)
-    godWalkTrack.Priority  = Enum.AnimationPriority.Action
-    godJumpTrack.Priority  = Enum.AnimationPriority.Action
-end
-
-function stopGodAnims()
-    pcall(function() if godWalkTrack and godWalkTrack.IsPlaying then godWalkTrack:Stop(0.2) end end)
-    pcall(function() if godJumpTrack and godJumpTrack.IsPlaying then godJumpTrack:Stop(0.1) end end)
-end
-
 local function destroyGodBP()
-    if bpGod then pcall(function() bpGod:Destroy() end); bpGod = nil end
-    _G.RB06_GOD_BP = nil
-    stopGodAnims()
+    if bpGod then pcall(function() bpGod:Destroy() end) end
+    bpGod = nil
+    _G.FRSN_GOD_BP = nil
 end
 
 bind(RunService.Heartbeat, function()
-    if not GOD_ON then
+    if not FOLLOW_ON then
         if bpGod then destroyGodBP() end
         return
     end
@@ -581,20 +495,19 @@ bind(RunService.Heartbeat, function()
         if bpGod then destroyGodBP() end
         return
     end
-
-    -- หาเพื่อน (teammate) ที่ใกล้สุด
+    -- หา teammate (role เดียวกัน) ที่ใกล้สุด
+    local myRole = IS_KILLER and "killer" or "survivor"
     local fromPos = LPRoot.Position
-    local fpx, fpy, fpz = fromPos.X, fromPos.Y, fromPos.Z
-    local myID = getTeamID(LP)
     local nearestRoot, nearestDSq = nil, math_huge
     for i = 1, targetCount do
         local p = activeTargets[i]
         local hum = pCacheHum[p]
-        if hum and hum.Health > 0 and myID and getTeamID(p) == myID then
+        if hum and hum.Health > 0 and pCacheRole[p] == myRole then
             local root = pCacheRoot[p]
             if root then
-                local rp = root.Position
-                local dx, dy, dz = rp.X - fpx, rp.Y - fpy, rp.Z - fpz
+                local dx = root.Position.X - fromPos.X
+                local dy = root.Position.Y - fromPos.Y
+                local dz = root.Position.Z - fromPos.Z
                 local dSq = dx*dx + dy*dy + dz*dz
                 if dSq < nearestDSq then nearestDSq, nearestRoot = dSq, root end
             end
@@ -604,457 +517,265 @@ bind(RunService.Heartbeat, function()
         if bpGod then destroyGodBP() end
         return
     end
-
-    -- ตำแหน่งหลังเพื่อน 10 studs (ตาม LookVector ของเพื่อน)
     local look = nearestRoot.CFrame.LookVector
     local tp   = nearestRoot.Position
-    -- clamp Y: ถ้าเพื่อนต่ำกว่าเรา → ลอยที่ Y เราเอง | ถ้าเพื่อนสูงกว่า → ขึ้นตามไม่จำกัด
-    local clampedY  = math_max(tp.Y, LPRoot.Position.Y)
-    local targetPos = v3_new(tp.X - look.X * GOD_DIST, clampedY, tp.Z - look.Z * GOD_DIST)
-
+    local clampedY = math_max(tp.Y, LPRoot.Position.Y)
+    local targetPos = v3_new(tp.X - look.X * FOLLOW_DIST, clampedY, tp.Z - look.Z * FOLLOW_DIST)
     if not bpGod or not bpGod.Parent then
         if bpGod then pcall(function() bpGod:Destroy() end) end
         bpGod = Instance.new("BodyPosition")
         bpGod.MaxForce = v3_new(4e5, 4e5, 4e5)
-        bpGod.P        = 1e4
-        bpGod.D        = 1250
-        bpGod.Parent   = LPRoot
-        _G.RB06_GOD_BP = bpGod
-        -- โหลด animation ครั้งแรก
-        loadGodAnims()
+        bpGod.P = 1e4
+        bpGod.D = 1250
+        bpGod.Parent = LPRoot
+        _G.FRSN_GOD_BP = bpGod
     end
     bpGod.Position = targetPos
-
-    -- Animation: เดิน / กระโดด / หยุด
-    if godWalkTrack and godJumpTrack then
-        local myPos   = LPRoot.Position
-        local moveDist = math_sqrt(
-            (myPos.X - targetPos.X)^2 +
-            (myPos.Z - targetPos.Z)^2
-        )
-        local heightDiff = targetPos.Y - myPos.Y
-
-        if heightDiff > 3 then
-            -- ต้องขึ้นสูง → jump animation
-            if not godJumpTrack.IsPlaying then
-                if godWalkTrack.IsPlaying then godWalkTrack:Stop(0.1) end
-                godJumpTrack:Play(0.1)
-            end
-        elseif moveDist > 1.5 then
-            -- กำลังเดินตาม → walk/run animation
-            if not godWalkTrack.IsPlaying then
-                if godJumpTrack.IsPlaying then godJumpTrack:Stop(0.1) end
-                godWalkTrack:Play(0.2)
-            end
-        else
-            -- ถึงที่แล้ว → หยุด
-            stopGodAnims()
-        end
-    end
 end)
 
--- ==================== GUI (Compact 130x290) ====================
+-- ==================== GUI ====================
 local sg = Instance.new("ScreenGui")
-sg.Name = "HLGUI"
-sg.ResetOnSpawn = false
-
--- Use CoreGui if available (safer from anti-cheat), otherwise fallback to PlayerGui
-local successCore = pcall(function()
-    sg.Parent = game:GetService("CoreGui")
-end)
-if not successCore then
-    sg.Parent = LP:WaitForChild("PlayerGui", 5) or LP:FindFirstChild("PlayerGui")
-end
+sg.Name = "FRSNGUI"; sg.ResetOnSpawn = false
+pcall(function() sg.Parent = game:GetService("CoreGui") end)
+if not sg.Parent then sg.Parent = LP:WaitForChild("PlayerGui", 5) end
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 130, 0, 338)
-f.Position = UDim2.new(0, 8, 0.5, -145)
-f.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+f.Size = UDim2.new(0, 138, 0, 280)
+f.Position = UDim2.new(0, 8, 0.5, -140)
+f.BackgroundColor3 = Color3.fromRGB(15, 10, 20)
 f.BackgroundTransparency = 0.1
 f.Parent = sg
 Instance.new("UICorner", f).CornerRadius = UDim.new(0, 5)
 local stk = Instance.new("UIStroke", f)
-stk.Color = Color3.fromRGB(180, 30, 30)
-stk.Thickness = 1
+stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 
 local titleL = Instance.new("TextLabel")
-titleL.Size = UDim2.new(1,-18,0,14)
-titleL.Position = UDim2.new(0,2,0,1)
-titleL.BackgroundTransparency = 1
-titleL.TextColor3 = Color3.fromRGB(255,100,100)
-titleL.Text = "06RB v3.4"
-titleL.TextScaled = true
-titleL.Font = Enum.Font.GothamBold
-titleL.Parent = f
+titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
+titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
+titleL.Text = "Forsaken v1.0"; titleL.TextScaled = true
+titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
+
+local roleL = Instance.new("TextLabel")
+roleL.Size = UDim2.new(1, -18, 0, 12); roleL.Position = UDim2.new(0, 2, 0, 16)
+roleL.BackgroundTransparency = 1; roleL.TextColor3 = Color3.fromRGB(200, 200, 100)
+roleL.Text = "Role: ?"; roleL.TextScaled = true
+roleL.Font = Enum.Font.Gotham; roleL.Parent = f
 
 local cX = Instance.new("TextButton")
-cX.Size = UDim2.new(0,14,0,14)
-cX.Position = UDim2.new(1,-15,0,1)
-cX.Text = "X"
-cX.TextColor3 = Color3.fromRGB(255,60,60)
-cX.BackgroundColor3 = Color3.fromRGB(50,10,10)
-cX.TextScaled = true
-cX.Font = Enum.Font.GothamBold
-cX.Parent = f
-Instance.new("UICorner", cX).CornerRadius = UDim.new(0,2)
+cX.Size = UDim2.new(0, 14, 0, 14); cX.Position = UDim2.new(1, -15, 0, 1)
+cX.Text = "X"; cX.TextColor3 = Color3.fromRGB(255, 60, 60)
+cX.BackgroundColor3 = Color3.fromRGB(50, 10, 10); cX.TextScaled = true
+cX.Font = Enum.Font.GothamBold; cX.Parent = f
+Instance.new("UICorner", cX).CornerRadius = UDim.new(0, 2)
 cX.MouseButton1Click:Connect(function() sg:Destroy() end)
 
-local function mkBtn(parent, x, y, w, h, txt, col)
+local function mkBtn(x, y, w, h, txt, col)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0,w,0,h)
-    b.Position = UDim2.new(0,x,0,y)
+    b.Size = UDim2.new(0, w, 0, h)
+    b.Position = UDim2.new(0, x, 0, y)
     b.BackgroundColor3 = col
-    b.TextColor3 = Color3.fromRGB(255,255,255)
-    b.Text = txt
-    b.TextScaled = true
-    b.Font = Enum.Font.GothamBold
-    b.Parent = parent
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0,3)
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.Text = txt; b.TextScaled = true; b.Font = Enum.Font.GothamBold
+    b.Parent = f
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
     return b
 end
 
-local function mkToggle(y, txt, col)
-    return mkBtn(f, 3, y, 124, 16, txt, col)
-end
-
--- Aim toggles
-local togBtn    = mkToggle(17, "ESP ON [H]",    Color3.fromRGB(180,30,30))
-local shootBtn  = mkToggle(35, "Shoot ON [Q]",  Color3.fromRGB(200,60,0))
-local watchBtn  = mkToggle(53, "Watch OFF [E]", Color3.fromRGB(40,60,40))
-local teamBtn   = mkToggle(71, "Team ON [T]",   Color3.fromRGB(30,80,150))
-local rescanBtn = mkToggle(89, "Rescan [R]",    Color3.fromRGB(40,60,100))
-
--- Divider
-local divM = Instance.new("Frame")
-divM.Size = UDim2.new(1,-6,0,1)
-divM.Position = UDim2.new(0,3,0,109)
-divM.BackgroundColor3 = Color3.fromRGB(80,80,80)
-divM.BorderSizePixel = 0
-divM.Parent = f
+-- Buttons
+local espBtn    = mkBtn(3,  32,  132, 18, "ESP ON [H]",      Color3.fromRGB(180, 30, 100))
+local watchBtn  = mkBtn(3,  52,  132, 18, "Watch OFF [E]",   Color3.fromRGB(40, 60, 40))
+local agenBtn   = mkBtn(3,  72,  132, 18, "AutoGen OFF [G]", Color3.fromRGB(40, 40, 80))
+local rescanBtn = mkBtn(3,  92,  132, 18, "Rescan [R]",      Color3.fromRGB(40, 60, 100))
 
 -- Speed row
 local sLbl = Instance.new("TextLabel")
-sLbl.Size = UDim2.new(0,40,0,12)
-sLbl.Position = UDim2.new(0,3,0,113)
-sLbl.BackgroundTransparency = 1
-sLbl.TextColor3 = Color3.fromRGB(100,200,255)
-sLbl.Text = "SPEED"
-sLbl.TextScaled = true
-sLbl.Font = Enum.Font.GothamBold
-sLbl.TextXAlignment = Enum.TextXAlignment.Left
+sLbl.Size = UDim2.new(0, 48, 0, 14); sLbl.Position = UDim2.new(0, 3, 0, 116)
+sLbl.BackgroundTransparency = 1; sLbl.TextColor3 = Color3.fromRGB(100, 200, 255)
+sLbl.Text = "SPEED"; sLbl.TextScaled = true
+sLbl.Font = Enum.Font.GothamBold; sLbl.TextXAlignment = Enum.TextXAlignment.Left
 sLbl.Parent = f
+local sVal = Instance.new("TextLabel")
+sVal.Size = UDim2.new(0, 36, 0, 14); sVal.Position = UDim2.new(1, -39, 0, 116)
+sVal.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+sVal.TextColor3 = Color3.new(1, 1, 1); sVal.Text = tostring(SPEED_VAL)
+sVal.TextScaled = true; sVal.Font = Enum.Font.GothamBold; sVal.Parent = f
+Instance.new("UICorner", sVal).CornerRadius = UDim.new(0, 3)
+local sm5 = mkBtn(3,   132, 30, 14, "-5",   Color3.fromRGB(120, 30, 30))
+local sm1 = mkBtn(35,  132, 30, 14, "-1",   Color3.fromRGB(80, 30, 30))
+local sp1 = mkBtn(67,  132, 30, 14, "+1",   Color3.fromRGB(30, 80, 30))
+local sp5 = mkBtn(99,  132, 36, 14, "+5",   Color3.fromRGB(30, 120, 30))
+local sTog = mkBtn(3,  148, 132, 18, "Speed OFF [F]", Color3.fromRGB(40, 40, 80))
 
-local sValL = Instance.new("TextLabel")
-sValL.Size = UDim2.new(0,36,0,14)
-sValL.Position = UDim2.new(1,-39,0,112)
-sValL.BackgroundColor3 = Color3.fromRGB(20,20,40)
-sValL.TextColor3 = Color3.fromRGB(255,255,255)
-sValL.Text = tostring(SPEED_VAL)
-sValL.TextScaled = true
-sValL.Font = Enum.Font.GothamBold
-sValL.Parent = f
-Instance.new("UICorner", sValL).CornerRadius = UDim.new(0,3)
-
-local sm10 = mkBtn(f, 3,   128, 28, 14, "-10", Color3.fromRGB(120,30,30))
-local sm1  = mkBtn(f, 33,  128, 28, 14, "-1",  Color3.fromRGB(80,30,30))
-local sp1  = mkBtn(f, 65,  128, 28, 14, "+1",  Color3.fromRGB(30,80,30))
-local sp10 = mkBtn(f, 95,  128, 32, 14, "+10", Color3.fromRGB(30,120,30))
-local sTog = mkBtn(f, 3,   144, 124, 16, "Speed ON [F]", Color3.fromRGB(30,120,220))
-
--- Divider 2
-local divM2 = Instance.new("Frame")
-divM2.Size = UDim2.new(1,-6,0,1)
-divM2.Position = UDim2.new(0,3,0,164)
-divM2.BackgroundColor3 = Color3.fromRGB(80,80,80)
-divM2.BorderSizePixel = 0
-divM2.Parent = f
-
--- Jump row
-local jLbl = Instance.new("TextLabel")
-jLbl.Size = UDim2.new(0,40,0,12)
-jLbl.Position = UDim2.new(0,3,0,168)
-jLbl.BackgroundTransparency = 1
-jLbl.TextColor3 = Color3.fromRGB(255,200,80)
-jLbl.Text = "JUMP"
-jLbl.TextScaled = true
-jLbl.Font = Enum.Font.GothamBold
-jLbl.TextXAlignment = Enum.TextXAlignment.Left
-jLbl.Parent = f
-
-local jValL = Instance.new("TextLabel")
-jValL.Size = UDim2.new(0,36,0,14)
-jValL.Position = UDim2.new(1,-39,0,167)
-jValL.BackgroundColor3 = Color3.fromRGB(20,20,40)
-jValL.TextColor3 = Color3.fromRGB(255,255,255)
-jValL.Text = tostring(JUMP_VAL)
-jValL.TextScaled = true
-jValL.Font = Enum.Font.GothamBold
-jValL.Parent = f
-Instance.new("UICorner", jValL).CornerRadius = UDim.new(0,3)
-
-local jm10 = mkBtn(f, 3,   183, 28, 14, "-10", Color3.fromRGB(120,60,20))
-local jm1  = mkBtn(f, 33,  183, 28, 14, "-1",  Color3.fromRGB(80,50,20))
-local jp1  = mkBtn(f, 65,  183, 28, 14, "+1",  Color3.fromRGB(30,80,30))
-local jp10 = mkBtn(f, 95,  183, 32, 14, "+10", Color3.fromRGB(30,120,30))
-local jTog = mkBtn(f, 3,   199, 124, 16, "Jump ON [G]", Color3.fromRGB(180,110,10))
-
--- Follow section
-local divM3 = Instance.new("Frame")
-divM3.Size = UDim2.new(1,-6,0,1)
-divM3.Position = UDim2.new(0,3,0,219)
-divM3.BackgroundColor3 = Color3.fromRGB(80,80,80)
-divM3.BorderSizePixel = 0
-divM3.Parent = f
-
-local gLbl = Instance.new("TextLabel")
-gLbl.Size = UDim2.new(0,54,0,12)
-gLbl.Position = UDim2.new(0,3,0,224)
-gLbl.BackgroundTransparency = 1
-gLbl.TextColor3 = Color3.fromRGB(120,220,180)
-gLbl.Text = "FOLLOW"
-gLbl.TextScaled = true
-gLbl.Font = Enum.Font.GothamBold
-gLbl.TextXAlignment = Enum.TextXAlignment.Left
-gLbl.Parent = f
-
-local gValL = Instance.new("TextLabel")
-gValL.Size = UDim2.new(0,36,0,14)
-gValL.Position = UDim2.new(1,-39,0,223)
-gValL.BackgroundColor3 = Color3.fromRGB(20,20,40)
-gValL.TextColor3 = Color3.fromRGB(255,255,255)
-gValL.Text = tostring(GOD_DIST)
-gValL.TextScaled = true
-gValL.Font = Enum.Font.GothamBold
-gValL.Parent = f
-Instance.new("UICorner", gValL).CornerRadius = UDim.new(0,3)
-
-local gm10 = mkBtn(f, 3,   239, 28, 14, "-10", Color3.fromRGB(100,40,80))
-local gm1  = mkBtn(f, 33,  239, 28, 14, "-1",  Color3.fromRGB(70,30,60))
-local gp1  = mkBtn(f, 65,  239, 28, 14, "+1",  Color3.fromRGB(30,80,60))
-local gp10 = mkBtn(f, 95,  239, 32, 14, "+10", Color3.fromRGB(30,120,80))
-local godBtn      = mkBtn(f, 3, 255, 124, 16, "Follow OFF [P]",   Color3.fromRGB(50,50,80))
-local faceLockBtn = mkBtn(f, 3, 273, 124, 16, "BackFace OFF [O]", Color3.fromRGB(50,50,80))
+-- Follow row
+local fLbl = Instance.new("TextLabel")
+fLbl.Size = UDim2.new(0, 48, 0, 14); fLbl.Position = UDim2.new(0, 3, 0, 170)
+fLbl.BackgroundTransparency = 1; fLbl.TextColor3 = Color3.fromRGB(120, 220, 180)
+fLbl.Text = "FOLLOW"; fLbl.TextScaled = true
+fLbl.Font = Enum.Font.GothamBold; fLbl.TextXAlignment = Enum.TextXAlignment.Left
+fLbl.Parent = f
+local fVal = Instance.new("TextLabel")
+fVal.Size = UDim2.new(0, 36, 0, 14); fVal.Position = UDim2.new(1, -39, 0, 170)
+fVal.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+fVal.TextColor3 = Color3.new(1, 1, 1); fVal.Text = tostring(FOLLOW_DIST)
+fVal.TextScaled = true; fVal.Font = Enum.Font.GothamBold; fVal.Parent = f
+Instance.new("UICorner", fVal).CornerRadius = UDim.new(0, 3)
+local fm5 = mkBtn(3,   186, 30, 14, "-5",   Color3.fromRGB(100, 40, 80))
+local fm1 = mkBtn(35,  186, 30, 14, "-1",   Color3.fromRGB(70, 30, 60))
+local fp1 = mkBtn(67,  186, 30, 14, "+1",   Color3.fromRGB(30, 80, 60))
+local fp5 = mkBtn(99,  186, 36, 14, "+5",   Color3.fromRGB(30, 120, 80))
+local followBtn = mkBtn(3, 202, 132, 18, "Follow OFF [P]", Color3.fromRGB(50, 50, 80))
 
 -- Status
-local divM4 = Instance.new("Frame")
-divM4.Size = UDim2.new(1,-6,0,1)
-divM4.Position = UDim2.new(0,3,0,293)
-divM4.BackgroundColor3 = Color3.fromRGB(80,80,80)
-divM4.BorderSizePixel = 0
-divM4.Parent = f
-
-local modeL = Instance.new("TextLabel")
-modeL.Size = UDim2.new(1,-4,0,12)
-modeL.Position = UDim2.new(0,2,0,297)
-modeL.BackgroundTransparency = 1
-modeL.TextColor3 = Color3.fromRGB(200,200,100)
-modeL.Text = NETCODE_MODE
-modeL.TextScaled = true
-modeL.Font = Enum.Font.Gotham
-modeL.Parent = f
-
-local cntL = Instance.new("TextLabel")
-cntL.Size = UDim2.new(1,-4,0,12)
-cntL.Position = UDim2.new(0,2,0,311)
-cntL.BackgroundTransparency = 1
-cntL.TextColor3 = Color3.fromRGB(150,150,150)
-cntL.Text = "P:0 T:- 0ms"
-cntL.TextScaled = true
-cntL.Font = Enum.Font.Gotham
-cntL.Parent = f
+local divM = Instance.new("Frame")
+divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 226)
+divM.BackgroundColor3 = Color3.fromRGB(80, 80, 80); divM.BorderSizePixel = 0
+divM.Parent = f
+local statL = Instance.new("TextLabel")
+statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 230)
+statL.BackgroundTransparency = 1; statL.TextColor3 = Color3.fromRGB(200, 200, 100)
+statL.Text = "P:0 G:0/0"; statL.TextScaled = true
+statL.Font = Enum.Font.Gotham; statL.Parent = f
+local hintL = Instance.new("TextLabel")
+hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 246)
+hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
+hintL.Text = "H/E/G/F/R/P"; hintL.TextScaled = true
+hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
-local drag,dS,fS = false
+local drag, dS, fS = false, nil, nil
 f.InputBegan:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=true dS=i.Position fS=f.Position end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag = true; dS = i.Position; fS = f.Position
+    end
 end)
 f.InputEnded:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 then drag=false end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
 end)
 bind(UIS.InputChanged, function(i)
-    if drag and i.UserInputType==Enum.UserInputType.MouseMovement then
-        local d=i.Position-dS
-        f.Position=UDim2.new(fS.X.Scale,fS.X.Offset+d.X,fS.Y.Scale,fS.Y.Offset+d.Y)
+    if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+        local d = i.Position - dS
+        f.Position = UDim2.new(fS.X.Scale, fS.X.Offset + d.X, fS.Y.Scale, fS.Y.Offset + d.Y)
     end
 end)
 
--- ==================== Logic ====================
+-- ==================== Toggles ====================
 local function toggleESP()
     ESPOn = not ESPOn
     setAllEnabled(ESPOn)
-    togBtn.BackgroundColor3 = ESPOn and Color3.fromRGB(180,30,30) or Color3.fromRGB(50,50,50)
-    togBtn.Text = "ESP "..(ESPOn and "ON" or "OFF").." [H]"
-end
-
-local function toggleShoot()
-    ShootOn = not ShootOn
-    shootBtn.BackgroundColor3 = ShootOn and Color3.fromRGB(200,60,0) or Color3.fromRGB(40,40,80)
-    shootBtn.Text = "Shoot "..(ShootOn and "ON" or "OFF").." [Q]"
+    espBtn.BackgroundColor3 = ESPOn and Color3.fromRGB(180, 30, 100) or Color3.fromRGB(50, 50, 50)
+    espBtn.Text = "ESP " .. (ESPOn and "ON" or "OFF") .. " [H]"
 end
 
 local function toggleWatch()
     WatchOn = not WatchOn
-    watchBtn.BackgroundColor3 = WatchOn and Color3.fromRGB(30,120,30) or Color3.fromRGB(40,60,40)
-    watchBtn.Text = "Watch "..(WatchOn and "ON" or "OFF").." [E]"
+    watchBtn.BackgroundColor3 = WatchOn and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(40, 60, 40)
+    watchBtn.Text = "Watch " .. (WatchOn and "ON" or "OFF") .. " [E]"
 end
 
-local function toggleTeam()
-    TeamCheck = not TeamCheck
-    teamBtn.BackgroundColor3 = TeamCheck and Color3.fromRGB(30,80,150) or Color3.fromRGB(50,50,50)
-    teamBtn.Text = "Team "..(TeamCheck and "ON" or "OFF").." [T]"
-    rebuildColors()
+local function toggleAutoGen()
+    AUTOGEN_ON = not AUTOGEN_ON
+    agenBtn.BackgroundColor3 = AUTOGEN_ON and Color3.fromRGB(80, 120, 30) or Color3.fromRGB(40, 40, 80)
+    agenBtn.Text = "AutoGen " .. (AUTOGEN_ON and "ON" or "OFF") .. " [G]"
+    if AUTOGEN_ON then
+        scanGenerators()
+        rebuildGenHL()
+    end
 end
 
 local function updS()
-    sValL.Text = tostring(SPEED_VAL)
+    sVal.Text = tostring(SPEED_VAL)
     if SPEED_ON then
-        sTog.BackgroundColor3 = Color3.fromRGB(30,120,220)
-        sTog.Text = "Speed ON [F] ="..SPEED_VAL
+        sTog.BackgroundColor3 = Color3.fromRGB(30, 120, 220)
+        sTog.Text = "Speed ON [F] =" .. math_min(SPEED_VAL, SPEED_MAX)
     else
-        sTog.BackgroundColor3 = Color3.fromRGB(40,40,80)
+        sTog.BackgroundColor3 = Color3.fromRGB(40, 40, 80)
         sTog.Text = "Speed OFF [F]"
     end
 end
+local function togS() SPEED_ON = not SPEED_ON; updS() end
 
-local function updJ()
-    jValL.Text = tostring(JUMP_VAL)
-    if JUMP_ON then
-        jTog.BackgroundColor3 = Color3.fromRGB(180,110,10)
-        jTog.Text = "Jump ON [G] ="..JUMP_VAL
+local function updFollow()
+    fVal.Text = tostring(FOLLOW_DIST)
+    if FOLLOW_ON then
+        followBtn.BackgroundColor3 = Color3.fromRGB(30, 150, 100)
+        followBtn.Text = "Follow ON [P] =" .. FOLLOW_DIST
     else
-        jTog.BackgroundColor3 = Color3.fromRGB(40,40,80)
-        jTog.Text = "Jump OFF [G]"
+        followBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+        followBtn.Text = "Follow OFF [P]"
     end
 end
 
-local function togS() SPEED_ON = not SPEED_ON updS() end
-local function togJ() JUMP_ON  = not JUMP_ON  updJ() end
-
-local function updGod()
-    gValL.Text = tostring(GOD_DIST)
-    if GOD_ON then
-        godBtn.BackgroundColor3 = Color3.fromRGB(30,150,100)
-        godBtn.Text = "Follow ON [P] ="..GOD_DIST
-    else
-        godBtn.BackgroundColor3 = Color3.fromRGB(50,50,80)
-        godBtn.Text = "Follow OFF [P]"
-    end
-end
-
-togBtn.MouseButton1Click:Connect(toggleESP)
-shootBtn.MouseButton1Click:Connect(toggleShoot)
+espBtn.MouseButton1Click:Connect(toggleESP)
 watchBtn.MouseButton1Click:Connect(toggleWatch)
-teamBtn.MouseButton1Click:Connect(toggleTeam)
-
+agenBtn.MouseButton1Click:Connect(toggleAutoGen)
 rescanBtn.MouseButton1Click:Connect(function()
-    rescan()
+    rescan(); scanGenerators(); rebuildGenHL()
     rescanBtn.Text = "Done!"
-    rescanBtn.BackgroundColor3 = Color3.fromRGB(30,100,30)
+    rescanBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 30)
     task.delay(1.2, function()
         rescanBtn.Text = "Rescan [R]"
-        rescanBtn.BackgroundColor3 = Color3.fromRGB(40,60,100)
+        rescanBtn.BackgroundColor3 = Color3.fromRGB(40, 60, 100)
     end)
 end)
 
-sm10.MouseButton1Click:Connect(function() SPEED_VAL=math_max(1,SPEED_VAL-10) updS() end)
-sm1.MouseButton1Click:Connect(function()  SPEED_VAL=math_max(1,SPEED_VAL-1)  updS() end)
-sp1.MouseButton1Click:Connect(function()  SPEED_VAL=SPEED_VAL+1  updS() end)
-sp10.MouseButton1Click:Connect(function() SPEED_VAL=SPEED_VAL+10 updS() end)
+sm5.MouseButton1Click:Connect(function() SPEED_VAL = math_max(1, SPEED_VAL - 5); updS() end)
+sm1.MouseButton1Click:Connect(function() SPEED_VAL = math_max(1, SPEED_VAL - 1); updS() end)
+sp1.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_VAL + 1); updS() end)
+sp5.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_VAL + 5); updS() end)
 sTog.MouseButton1Click:Connect(togS)
 
-jm10.MouseButton1Click:Connect(function() JUMP_VAL=math_max(1,JUMP_VAL-10) updJ() end)
-jm1.MouseButton1Click:Connect(function()  JUMP_VAL=math_max(1,JUMP_VAL-1)  updJ() end)
-jp1.MouseButton1Click:Connect(function()  JUMP_VAL=JUMP_VAL+1  updJ() end)
-jp10.MouseButton1Click:Connect(function() JUMP_VAL=JUMP_VAL+10 updJ() end)
-jTog.MouseButton1Click:Connect(togJ)
-
-gm10.MouseButton1Click:Connect(function() GOD_DIST = math_max(2, GOD_DIST-10) updGod() end)
-gm1.MouseButton1Click:Connect(function()  GOD_DIST = math_max(2, GOD_DIST-1)  updGod() end)
-gp1.MouseButton1Click:Connect(function()  GOD_DIST = GOD_DIST+1  updGod() end)
-gp10.MouseButton1Click:Connect(function() GOD_DIST = GOD_DIST+10 updGod() end)
-godBtn.MouseButton1Click:Connect(function()
-    GOD_ON = not GOD_ON
-    updGod()
-end)
-
-local function toggleFaceLock()
-    FACELOCK_ON = not FACELOCK_ON
-    if LPHum then LPHum.AutoRotate = not FACELOCK_ON end
-    faceLockBtn.BackgroundColor3 = FACELOCK_ON
-        and Color3.fromRGB(180,60,20) or Color3.fromRGB(50,50,80)
-    faceLockBtn.Text = "BackFace "..(FACELOCK_ON and "ON" or "OFF").." [O]"
-end
-faceLockBtn.MouseButton1Click:Connect(toggleFaceLock)
+fm5.MouseButton1Click:Connect(function() FOLLOW_DIST = math_max(2, FOLLOW_DIST - 5); updFollow() end)
+fm1.MouseButton1Click:Connect(function() FOLLOW_DIST = math_max(2, FOLLOW_DIST - 1); updFollow() end)
+fp1.MouseButton1Click:Connect(function() FOLLOW_DIST = FOLLOW_DIST + 1; updFollow() end)
+fp5.MouseButton1Click:Connect(function() FOLLOW_DIST = FOLLOW_DIST + 5; updFollow() end)
+followBtn.MouseButton1Click:Connect(function() FOLLOW_ON = not FOLLOW_ON; updFollow() end)
 
 -- ==================== Hotkeys ====================
 bind(UIS.InputBegan, function(input, gp)
     if gp then return end
     local kc = input.KeyCode
-    if kc == Enum.KeyCode.H then toggleESP()
-    elseif kc == Enum.KeyCode.Q then toggleShoot()
+    if     kc == Enum.KeyCode.H then toggleESP()
     elseif kc == Enum.KeyCode.E then toggleWatch()
-    elseif kc == Enum.KeyCode.T then toggleTeam()
+    elseif kc == Enum.KeyCode.G then toggleAutoGen()
+    elseif kc == Enum.KeyCode.F then togS()
     elseif kc == Enum.KeyCode.R then
-        rescan()
+        rescan(); scanGenerators(); rebuildGenHL()
         rescanBtn.Text = "Done!"
         task.delay(1.2, function() rescanBtn.Text = "Rescan [R]" end)
-    elseif kc == Enum.KeyCode.F then togS()
-    elseif kc == Enum.KeyCode.G then togJ()
-    elseif kc == Enum.KeyCode.P then
-        GOD_ON = not GOD_ON
-        updGod()
-        print("[06RB] FOLLOW "..(GOD_ON and "ON" or "OFF").." dist="..GOD_DIST)
-    elseif kc == Enum.KeyCode.O then
-        toggleFaceLock()
-        print("[06RB] BACKFACE "..(FACELOCK_ON and "ON" or "OFF"))
-    elseif kc == Enum.KeyCode.Space and JUMP_ON then
-        -- Instant impulse jump (AssemblyLinearVelocity)
-        if LPRoot and LPHum and LPHum.Health > 0 then
-            local v = LPRoot.AssemblyLinearVelocity
-            LPRoot.AssemblyLinearVelocity = v3_new(v.X, JUMP_VAL, v.Z)
-            LPHum:ChangeState(Enum.HumanoidStateType.Jumping)
-        end
+    elseif kc == Enum.KeyCode.P then FOLLOW_ON = not FOLLOW_ON; updFollow()
     end
 end)
 
 -- ==================== Status updater ====================
-local lastMyTeam = nil
 task.spawn(function()
     while task.wait(1) do
-        if not _G.RB06_CONNS or _G.RB06_CONNS ~= CONNS then return end
-        local t = getTeamID(LP) or "-"
-        local pingMs = 0
-        pcall(function() pingMs = math.floor(LP:GetNetworkPing() * 1000) end)
-        cntL.Text = "P:"..targetCount.." T:"..tostring(t).." "..pingMs.."ms"
-        if TeamCheck and t ~= lastMyTeam then
-            lastMyTeam = t
-            rebuildColors()
+        if not _G.FRSN_CONNS or _G.FRSN_CONNS ~= CONNS then return end
+        local done = 0
+        for _, g in pairs(cachedGens) do
+            if g.model and g.model.Parent and isGenCompleted(g.model) then done += 1 end
+        end
+        statL.Text = "P:" .. targetCount .. " G:" .. done .. "/" .. #cachedGens
+        roleL.Text = "Role: " .. (IS_KILLER and "🔪 KILLER" or "🟢 SURVIVOR")
+        roleL.TextColor3 = IS_KILLER
+            and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 255, 130)
+        -- update gen highlight colors (เสร็จ → เทา)
+        if ESPOn and #GenHL > 0 then
+            for i, g in pairs(cachedGens) do
+                local hl = GenHL[i]
+                if hl and hl.Parent then
+                    hl.FillColor = isGenCompleted(g.model) and COL_GEN_DONE or COL_GEN_TODO
+                end
+            end
         end
     end
 end)
 
-updS() updJ() updGod()
+updS(); updFollow()
 
--- ==================== BackFace (task.defer — รันหลัง script ทุกตัวในเฟรม) ====================
--- task.defer = ต่อท้าย queue ของเฟรมนั้น → เกมเซ็ต CFrame ก่อน → เราเขียนทับทีหลังเสมอ
-local function doFaceLock()
-    if not FACELOCK_ON or not LPRoot or not LPHum or LPHum.Health <= 0 then return end
-    local flHead = findBestTarget(false)
-    if not flHead then return end
-    local tp    = flHead.Position
-    local myPos = LPRoot.Position
-    local dx, dz = tp.X - myPos.X, tp.Z - myPos.Z
-    if dx*dx + dz*dz > 0.25 then
-        -- หน้าชี้ออกจากศัตรู = หลังหันเข้าหาศัตรู
-        LPRoot.CFrame = cf_lookAt(myPos, v3_new(myPos.X - dx, myPos.Y, myPos.Z - dz))
-    end
-end
-
-bind(RunService.Heartbeat, function()
-    if FACELOCK_ON then task.defer(doFaceLock) end
-end)
-
--- ==================== INIT (เรียกหลัง define ทุกฟังก์ชันแล้ว — กัน nil crash) ====================
+-- ==================== INIT ====================
 cacheLPChar(LP.Character)
+scanGenerators()
+rebuildGenHL()
 
-print("[06RB v3.4.0 Unified] Aim+Move+Follow loaded | Netcode:", NETCODE_MODE)
+print("[Forsaken v1.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+    "| Gens:", #cachedGens)
