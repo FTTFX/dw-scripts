@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v2.0 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v2.1 (Survivor + Killer auto-detect)
+-- v2.1: Watch (E) → ล็อค role ตรงข้ามเท่านั้น (Killer→Survivor / Survivor→Killer)
+--       ถ้าหา enemy ไม่เจอ → fallback ใกล้สุด (มาร์ค ⚠️ ให้รู้)
 -- v2.0: FIX role detect → ใช้ Team/Attribute/ชื่อ list (เดิม char.Name == player.Name พลาด)
 --       FIX scan Gen/Item → recursive ทั้ง workspace.Map (เดิมแค่ Ingame/Map ตรงๆ พลาดถ้า nested)
 --       + auto rescan ทุก 3 วิ ตอน items เปลี่ยน (เข้า match ใหม่)
@@ -543,13 +545,17 @@ task.spawn(function()
 end)
 
 -- ==================== Find Watch target ====================
--- v1.3: เลิกกรอง role (detect ไม่แม่น) → เล็งใครก็ได้ใกล้สุดที่ไม่ใช่ตัวเอง
--- Killer: ใกล้สุดมักเป็น Survivor (Killer ตัวเดียว)
--- Survivor: ใกล้สุดมักเป็น Killer (ถ้า killer ตามมา)
+-- v2.1: ล็อคเฉพาะ role ตรงข้าม (Killer → Survivor only / Survivor → Killer only)
+-- fallback: ถ้า role detect ยังไม่พร้อม (เพิ่งเข้าแมตช์) → เล็งใครก็ได้ใกล้สุด
 local function findWatchTarget()
     if not LPRoot then return nil end
     local fromPos = LPRoot.Position
+    local myRole = IS_KILLER and "killer" or "survivor"
+    local wantRole = IS_KILLER and "survivor" or "killer"
+
     local bestHead, bestPlayer, bestDSq = nil, nil, math_huge
+    local fallbackHead, fallbackPlayer, fallbackDSq = nil, nil, math_huge
+
     for i = 1, targetCount do
         local p = activeTargets[i]
         local hum = pCacheHum[p]
@@ -561,13 +567,31 @@ local function findWatchTarget()
                 local dy = root.Position.Y - fromPos.Y
                 local dz = root.Position.Z - fromPos.Z
                 local dSq = dx*dx + dy*dy + dz*dz
-                if dSq < bestDSq then
-                    bestDSq, bestHead, bestPlayer = dSq, head, p
+
+                local role = pCacheRole[p]
+                if role == wantRole then
+                    -- enemy → priority
+                    if dSq < bestDSq then
+                        bestDSq, bestHead, bestPlayer = dSq, head, p
+                    end
+                else
+                    -- teammate or unknown → fallback
+                    if dSq < fallbackDSq then
+                        fallbackDSq, fallbackHead, fallbackPlayer = dSq, head, p
+                    end
                 end
             end
         end
     end
-    return bestHead, bestPlayer, math_sqrt(bestDSq)
+
+    if bestHead then
+        return bestHead, bestPlayer, math_sqrt(bestDSq)
+    end
+    -- ไม่เจอ enemy → fallback (กัน role detect ยังไม่ assign)
+    if fallbackHead then
+        return fallbackHead, fallbackPlayer, math_sqrt(fallbackDSq)
+    end
+    return nil
 end
 
 -- ==================== Watch (BindToRenderStep — priority Last) ====================
@@ -590,7 +614,10 @@ RunService:BindToRenderStep(WATCH_BIND, Enum.RenderPriority.Last.Value, function
         if (lookPos - myPos).Magnitude > 0.5 then
             LPRoot.CFrame = CFrame.lookAt(myPos, lookPos)
         end
-        watchTargetName = player and player.Name or "?"
+        local wantRole = IS_KILLER and "survivor" or "killer"
+        local pRole = player and pCacheRole[player]
+        local mark = (pRole == wantRole) and "" or "⚠️"
+        watchTargetName = (player and player.Name or "?") .. mark
         watchTargetDist = dist or 0
     else
         watchTargetName = "(no target)"
@@ -790,7 +817,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.0"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.1"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1058,5 +1085,5 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v2.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
