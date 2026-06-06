@@ -1,4 +1,5 @@
--- 02Forsaken_spy.txt — Forsaken Discovery Spy v1.0
+-- 02Forsaken_spy.txt — Forsaken Discovery Spy v1.1
+-- v1.1: Killer ไม่มี Tool → เพิ่ม hook MouseButton1 (วัดระยะตอนคลิกเมาส์) + แสดง remote args ละเอียดขึ้น
 -- รัน ครั้งแรก ในเกม → ได้ข้อมูล:
 --   1) workspace top-level + map structure
 --   2) Players (Team, Attributes, Character) — แยก Killer vs Survivor
@@ -52,7 +53,7 @@ titleLbl.Size = UDim2.new(1, -10, 1, 0)
 titleLbl.Position = UDim2.new(0, 10, 0, 0)
 titleLbl.BackgroundTransparency = 1
 titleLbl.TextColor3 = Color3.fromRGB(255, 180, 220)
-titleLbl.Text = "Forsaken Spy v1.0 — กำลัง scan..."
+titleLbl.Text = "Forsaken Spy v1.1 — กำลัง scan..."
 titleLbl.Font = Enum.Font.Code; titleLbl.TextSize = 12
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.Parent = titleBar
@@ -391,7 +392,7 @@ task.spawn(function()
     addS("", C.S)
 
     addS("=== STATIC scan เสร็จแล้ว — กด LIVE ต่อ ===", C.Y)
-    titleLbl.Text = "Forsaken Spy v1.0 — STATIC เสร็จ (กด ▶ LIVE)"
+    titleLbl.Text = "Forsaken Spy v1.1 — STATIC เสร็จ (กด ▶ LIVE)"
     warn("[FRSN_SPY] STATIC scan เสร็จ")
 end)
 
@@ -410,6 +411,26 @@ local function startLive()
     addL("", C.S)
 
     -- ── 5a. Hook __namecall (RemoteEvent:FireServer / :InvokeServer) ──
+    -- ทำ value→string แบบ recursive (รองรับ table ลึกระดับ 2)
+    local function v2s(v, depth)
+        depth = depth or 0
+        local tp = typeof(v)
+        if tp == "Instance" then return "[" .. v.ClassName .. ":" .. v.Name .. "]"
+        elseif tp == "Vector3" then return string.format("(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
+        elseif tp == "CFrame" then return string.format("CF(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
+        elseif tp == "table" then
+            if depth >= 2 then return "{...}" end
+            local parts = {}
+            local n = 0
+            for k, vv in pairs(v) do
+                n += 1; if n > 5 then table.insert(parts, "...") break end
+                table.insert(parts, tostring(k) .. "=" .. v2s(vv, depth + 1))
+            end
+            return "{" .. table.concat(parts, ", ") .. "}"
+        elseif tp == "string" then return '"' .. v .. '"'
+        else return tostring(v) end
+    end
+
     local mt = getrawmetatable and getrawmetatable(game)
     if mt and setreadonly and hookmetamethod then
         pcall(function() setreadonly(mt, false) end)
@@ -417,22 +438,13 @@ local function startLive()
             local method = getnamecallmethod()
             if (method == "FireServer" or method == "InvokeServer") and liveOn then
                 local args = {...}
-                local argStr = ""
-                for i, v in ipairs(args) do
-                    local tp = typeof(v)
-                    if tp == "Instance" then
-                        argStr = argStr .. "[" .. v.ClassName .. ":" .. v.Name .. "]"
-                    elseif tp == "Vector3" then
-                        argStr = argStr .. string.format("(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
-                    elseif tp == "table" then
-                        argStr = argStr .. "{tbl}"
-                    else
-                        argStr = argStr .. tostring(v)
-                    end
-                    if i < #args then argStr = argStr .. ", " end
-                end
+                local parts = {}
+                for i, v in ipairs(args) do table.insert(parts, v2s(v)) end
+                local argStr = table.concat(parts, ", ")
                 task.spawn(function()
-                    addL("🌐 " .. method .. " " .. self.Name .. " (" .. argStr .. ")", C.M)
+                    -- โชว์ full path เพื่อรู้ว่า remote อยู่ที่ไหน
+                    addL("🌐 " .. method .. " " .. self:GetFullName(), C.M)
+                    addL("    args: (" .. argStr .. ")", C.B)
                 end)
             end
             return origNamecall(self, ...)
@@ -442,6 +454,42 @@ local function startLive()
     else
         addL("⚠️ executor ไม่รองรับ hookmetamethod — ข้าม remote hook", C.O)
     end
+
+    -- ── 5a2. Hook MouseButton1 click (Killer ไม่มี Tool → ใช้ click hook แทน) ──
+    -- ทุกครั้งที่คลิกซ้าย: log ระยะถึงผู้เล่นอื่น + ระยะถึงจุด mouse hit
+    local UIS = game:GetService("UserInputService")
+    local mouse = LP:GetMouse()
+    local c2 = UIS.InputBegan:Connect(function(input, gp)
+        if gp or not liveOn then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+        local char = LP.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        -- หาผู้เล่นใกล้สุด + ระยะ
+        local bestName, bestD, bestChar = nil, math.huge, nil
+        for _, p in pairs(Players:GetPlayers()) do
+            if p ~= LP and p.Character then
+                local rp = p.Character:FindFirstChild("HumanoidRootPart")
+                if rp then
+                    local d = (hrp.Position - rp.Position).Magnitude
+                    if d < bestD then bestD = d bestName = p.Name bestChar = p.Character.Name end
+                end
+            end
+        end
+        -- ระยะถึงจุดที่ mouse ชี้
+        local mouseHit = mouse.Hit and mouse.Hit.Position
+        local mouseD = mouseHit and (hrp.Position - mouseHit).Magnitude or 0
+        task.spawn(function()
+            if bestName then
+                addL(string.format("🖱️ CLICK | nearest=%s(%s) @ %.1f | mouse=%.1f studs",
+                    bestName, bestChar or "?", bestD, mouseD), C.M)
+            else
+                addL(string.format("🖱️ CLICK | (ไม่มีผู้เล่น) | mouse=%.1f studs", mouseD), C.M)
+            end
+        end)
+    end)
+    table.insert(hookConns, c2)
+    addL("✅ MouseButton1 hook สำเร็จ", C.G)
 
     -- ── 5b. Hook Tool.Activated — วัดระยะตอนตี ──
     local function hookTool(tool)
