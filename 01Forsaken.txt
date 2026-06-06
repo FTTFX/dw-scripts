@@ -1,7 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v1.5 (Survivor + Killer auto-detect)
--- v1.5.1:
---   * Stalk pause "ใกล้พอ" — เลิก Move(0,0,0) ที่บังคับหยุด → return เลย ปล่อย user เดินอิสระ
---   * STALK_DIST default 15 (จาก 8) | max 30
+-- 01Forsaken.txt — Forsaken Helper v1.6 (Survivor + Killer auto-detect)
+-- v1.6: REVERT Stalk → กลับ v1.4 logic เดิม (ใกล้ Killer = stalk เสมอ, ไม่มี pause WASD)
+--       เก็บ v1.5 Watch (E) — หมุน HRP ตัวด้วย | STALK_DIST default 15
 -- v1.5:
 --   * Watch (E) — หมุน HRP ตัวด้วย (ไม่ใช่แค่ camera) → กด W = วิ่งใส่ Survivor เลย
 --   * Stalk (K) — smart pause: ถ้า user กด WASD เอง → ปล่อย user control
@@ -607,13 +606,7 @@ bind(RunService.Heartbeat, function()
         return
     end
 
-    -- ── SMART PAUSE: user กด WASD เอง (วิ่งช่วยเพื่อน/หลบเอง) → ปล่อย user control ──
-    if LPHum.MoveDirection.Magnitude > 0.1 then
-        stalkStatus = string.format("⏸ user เดินเอง (d=%.0f)", nearestD)
-        return   -- ไม่ override → user คุมเต็มที่
-    end
-
-    -- ── ไม่กดอะไร + Killer ในระยะ → เดินไปจุดหลัง Killer (stop เองตอนถึง target) ──
+    -- ── หาจุดยืนหลัง Killer (หลีกกำแพง) → เดินไป ──
     local target, label = findStalkSpot(nearestRoot)
     if not target then
         stalkStatus = "all blocked"
@@ -649,7 +642,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.5"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.6"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -882,5 +875,5 @@ cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.5] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.6] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
