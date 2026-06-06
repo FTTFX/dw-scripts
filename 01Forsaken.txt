@@ -1,7 +1,10 @@
 -- 01Forsaken.txt — Forsaken Helper v1.5 (Survivor + Killer auto-detect)
+-- v1.5.1:
+--   * Stalk pause "ใกล้พอ" — เลิก Move(0,0,0) ที่บังคับหยุด → return เลย ปล่อย user เดินอิสระ
+--   * STALK_DIST default 15 (จาก 8) | max 30
 -- v1.5:
 --   * Watch (E) — หมุน HRP ตัวด้วย (ไม่ใช่แค่ camera) → กด W = วิ่งใส่ Survivor เลย
---   * Stalk (K) — smart pause: ถ้า user กด WASD เอง / ใกล้พอแล้ว → ปล่อย user control
+--   * Stalk (K) — smart pause: ถ้า user กด WASD เอง → ปล่อย user control
 -- v1.4: เพิ่ม STALK [K]
 -- v1.3:
 --   * FIX: Watch (E) — เลิกกรอง role (detect ผิด: Survivor เลือก char ชื่อ Noob ≠ Player.Name)
@@ -84,7 +87,7 @@ local STALK_ON  = false
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
-local STALK_DIST    = 8        -- ระยะห่างจาก Killer (studs) — ปรับใน GUI 3-20
+local STALK_DIST    = 15       -- ระยะห่างจาก Killer (studs) — ปรับใน GUI 3-30
 local STALK_TRIGGER = 50       -- เริ่ม stalk เมื่อ Killer ใกล้ ≤ นี้ studs
 local STALK_SPEED   = 29       -- WalkSpeed ตอน stalk (เกมเดิม 16) — max 29
 local lastTick   = 0
@@ -604,20 +607,13 @@ bind(RunService.Heartbeat, function()
         return
     end
 
-    -- ── SMART PAUSE 1: user กด WASD อยู่ → ปล่อย user control (ช่วยเพื่อน/เดินเอง) ──
+    -- ── SMART PAUSE: user กด WASD เอง (วิ่งช่วยเพื่อน/หลบเอง) → ปล่อย user control ──
     if LPHum.MoveDirection.Magnitude > 0.1 then
         stalkStatus = string.format("⏸ user เดินเอง (d=%.0f)", nearestD)
-        return   -- ไม่ Move() → user คุมเองเต็มที่
+        return   -- ไม่ override → user คุมเต็มที่
     end
 
-    -- ── SMART PAUSE 2: ใกล้ Killer พอแล้ว (≤ STALK_DIST) → ไม่ต้องเดินเข้าไปอีก ──
-    if nearestD <= STALK_DIST then
-        LPHum:Move(v3_new(0, 0, 0), false)   -- หยุดเดิน
-        stalkStatus = string.format("✓ ใกล้พอ (%.0fm)", nearestD)
-        return
-    end
-
-    -- ── ห่างเกิน → หาจุดหลัง Killer (หลีกกำแพง) → เดินไป ──
+    -- ── ไม่กดอะไร + Killer ในระยะ → เดินไปจุดหลัง Killer (stop เองตอนถึง target) ──
     local target, label = findStalkSpot(nearestRoot)
     if not target then
         stalkStatus = "all blocked"
@@ -829,8 +825,8 @@ sTog.MouseButton1Click:Connect(togS)
 -- Stalk buttons
 km5.MouseButton1Click:Connect(function() STALK_DIST = math_max(3,  STALK_DIST - 5); updK() end)
 km1.MouseButton1Click:Connect(function() STALK_DIST = math_max(3,  STALK_DIST - 1); updK() end)
-kp1.MouseButton1Click:Connect(function() STALK_DIST = math_min(20, STALK_DIST + 1); updK() end)
-kp5.MouseButton1Click:Connect(function() STALK_DIST = math_min(20, STALK_DIST + 5); updK() end)
+kp1.MouseButton1Click:Connect(function() STALK_DIST = math_min(30, STALK_DIST + 1); updK() end)
+kp5.MouseButton1Click:Connect(function() STALK_DIST = math_min(30, STALK_DIST + 5); updK() end)
 kTog.MouseButton1Click:Connect(togK)
 
 -- ==================== Hotkeys ====================
