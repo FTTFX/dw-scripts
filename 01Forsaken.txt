@@ -1,4 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v1.6 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v1.8 (Survivor + Killer auto-detect)
+-- v1.8: + ESP Items (Medkit/BloxyCola/etc.) — เหลือง = ไอเท็มตามพื้น
+--       scan Workspace.Map.Ingame.Map.<name>.ItemRoot → highlight + label ชื่อ + ระยะ
+-- v1.7: STALK ระยะอัตโนมัติตาม role (Killer=2, Survivor=22)
 -- v1.6: REVERT Stalk → กลับ v1.4 logic เดิม (ใกล้ Killer = stalk เสมอ, ไม่มี pause WASD)
 --       เก็บ v1.5 Watch (E) — หมุน HRP ตัวด้วย | STALK_DIST default 15
 -- v1.5:
@@ -56,6 +59,7 @@ if _G.FRSN_CONNS then
     end
     for _, hl in pairs(_G.FRSN_HL or {}) do pcall(function() hl:Destroy() end) end
     for _, hl in pairs(_G.FRSN_GEN_HL or {}) do pcall(function() hl:Destroy() end) end
+    for _, hl in pairs(_G.FRSN_ITEM_HL or {}) do pcall(function() hl:Destroy() end) end
     pcall(function()
         local cg = game:GetService("CoreGui"):FindFirstChild("FRSNGUI")
         if cg then cg:Destroy() end
@@ -64,12 +68,14 @@ if _G.FRSN_CONNS then
     end)
     if _G.FRSN_BV then pcall(function() _G.FRSN_BV:Destroy() end) end
 end
-_G.FRSN_CONNS  = {}
-_G.FRSN_HL     = {}    -- Player highlights
-_G.FRSN_GEN_HL = {}    -- Generator highlights
+_G.FRSN_CONNS   = {}
+_G.FRSN_HL      = {}    -- Player highlights
+_G.FRSN_GEN_HL  = {}    -- Generator highlights
+_G.FRSN_ITEM_HL = {}    -- Item highlights (Medkit/BloxyCola/...)
 local CONNS      = _G.FRSN_CONNS
 local Highlights = _G.FRSN_HL
 local GenHL      = _G.FRSN_GEN_HL
+local ItemHL     = _G.FRSN_ITEM_HL
 
 local function bind(sig, fn)
     local c = sig:Connect(fn)
@@ -169,6 +175,7 @@ local COL_KILLER   = Color3.fromRGB(255,  50,  50)   -- แดง
 local COL_SURVIVOR = Color3.fromRGB( 50, 255,  80)   -- เขียว
 local COL_GEN_TODO = Color3.fromRGB(  0, 200, 255)   -- ฟ้า — gen ยังไม่เสร็จ
 local COL_GEN_DONE = Color3.fromRGB(120, 120, 120)   -- เทา — gen เสร็จแล้ว
+local COL_ITEM     = Color3.fromRGB(255, 230,  60)   -- เหลือง — ไอเท็ม
 local COL_WHITE    = Color3.fromRGB(255, 255, 255)
 
 local function colorFor(role)
@@ -220,6 +227,10 @@ local function setAllEnabled(val)
     end
     for _, hl in pairs(GenHL) do
         pcall(function() hl.Enabled = val end)
+    end
+    for _, h in pairs(ItemHL) do
+        if h.hl then pcall(function() h.hl.Enabled = val end) end
+        if h.bb then pcall(function() h.bb.Enabled = val end) end
     end
 end
 
@@ -401,6 +412,96 @@ local function rebuildGenHL()
     end
 end
 
+-- ==================== ITEM scan + ESP (Medkit/BloxyCola/etc.) ====================
+-- path: Workspace.Map.Ingame.Map.<ItemName>.ItemRoot
+-- spy confirmed: Medkit, BloxyCola — แต่ scan แบบเปิดกว้าง (เจอ ItemRoot = item)
+local cachedItems = {}    -- list ของ { model, root, name }
+local lastItemScan = 0
+
+local function isItemModel(ch)
+    if not ch:IsA("Model") then return nil end
+    local root = ch:FindFirstChild("ItemRoot")
+    if root and root:IsA("BasePart") then return root end
+    return nil
+end
+
+local function scanItems()
+    cachedItems = {}
+    pcall(function()
+        local map = workspace:FindFirstChild("Map")
+        if not map then return end
+        local ig = map:FindFirstChild("Ingame")
+        if not ig then return end
+        local m2 = ig:FindFirstChild("Map")
+        if not m2 then return end
+        for _, ch in pairs(m2:GetChildren()) do
+            if ch.Name ~= "Generator" then
+                local root = isItemModel(ch)
+                if root then
+                    table.insert(cachedItems, { model = ch, root = root, name = ch.Name })
+                end
+            end
+        end
+    end)
+end
+
+local function rebuildItemHL()
+    for _, h in pairs(ItemHL) do
+        if h.hl then pcall(function() h.hl:Destroy() end) end
+        if h.bb then pcall(function() h.bb:Destroy() end) end
+    end
+    table.clear(ItemHL)
+    if not ESPOn then return end
+    for _, it in pairs(cachedItems) do
+        if it.model and it.model.Parent then
+            local hl = Instance.new("Highlight")
+            hl.FillColor    = COL_ITEM
+            hl.OutlineColor = COL_WHITE
+            hl.FillTransparency    = 0.4
+            hl.OutlineTransparency = 0.1
+            hl.DepthMode    = Enum.HighlightDepthMode.AlwaysOnTop
+            hl.Adornee      = it.model
+            hl.Parent       = it.model
+            hl.Enabled      = ESPOn
+            -- BillboardGui: ชื่อ + ระยะ
+            local bb = Instance.new("BillboardGui")
+            bb.Adornee = it.root
+            bb.Size = UDim2.new(0, 100, 0, 22)
+            bb.StudsOffset = Vector3.new(0, 2, 0)
+            bb.AlwaysOnTop = true
+            bb.LightInfluence = 0
+            bb.Parent = it.root
+            bb.Enabled = ESPOn
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextColor3 = COL_ITEM
+            lbl.TextStrokeTransparency = 0
+            lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextScaled = true
+            lbl.Text = it.name
+            lbl.Parent = bb
+            table.insert(ItemHL, { hl = hl, bb = bb, lbl = lbl, item = it })
+        end
+    end
+end
+
+-- update item label ระยะทุก 0.5 วิ (เบากว่า render frame)
+task.spawn(function()
+    while task.wait(0.5) do
+        if not _G.FRSN_CONNS or _G.FRSN_CONNS ~= CONNS then return end
+        if not ESPOn or not LPRoot then continue end
+        local fp = LPRoot.Position
+        for _, h in pairs(ItemHL) do
+            if h.lbl and h.item and h.item.root and h.item.root.Parent then
+                local d = (h.item.root.Position - fp).Magnitude
+                h.lbl.Text = h.item.name .. " " .. math.floor(d) .. "m"
+            end
+        end
+    end
+end)
+
 -- ==================== Find Watch target ====================
 -- v1.3: เลิกกรอง role (detect ไม่แม่น) → เล็งใครก็ได้ใกล้สุดที่ไม่ใช่ตัวเอง
 -- Killer: ใกล้สุดมักเป็น Survivor (Killer ตัวเดียว)
@@ -496,6 +597,8 @@ bind(RunService.Heartbeat, function()
     if clock() - lastGenScan > 5 then
         scanGenerators()
         rebuildGenHL()
+        scanItems()
+        rebuildItemHL()
         lastGenScan = clock()
     end
 
@@ -647,7 +750,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.7"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.8"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -804,7 +907,7 @@ espBtn.MouseButton1Click:Connect(toggleESP)
 watchBtn.MouseButton1Click:Connect(toggleWatch)
 agenBtn.MouseButton1Click:Connect(toggleAutoGen)
 rescanBtn.MouseButton1Click:Connect(function()
-    rescan(); scanGenerators(); rebuildGenHL()
+    rescan(); scanGenerators(); rebuildGenHL(); scanItems(); rebuildItemHL()
     rescanBtn.Text = "Done!"
     rescanBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 30)
     task.delay(1.2, function()
@@ -832,7 +935,7 @@ bind(UIS.InputBegan, function(input, gp)
     elseif kc == Enum.KeyCode.F then togS()
     elseif kc == Enum.KeyCode.K then togK()
     elseif kc == Enum.KeyCode.R then
-        rescan(); scanGenerators(); rebuildGenHL()
+        rescan(); scanGenerators(); rebuildGenHL(); scanItems(); rebuildItemHL()
         rescanBtn.Text = "Done!"
         task.delay(1.2, function() rescanBtn.Text = "Rescan [R]" end)
     end
@@ -847,6 +950,7 @@ task.spawn(function()
             if g.model and g.model.Parent and isGenCompleted(g.model) then done += 1 end
         end
         statL.Text = "P:" .. targetCount .. " G:" .. done .. "/" .. #cachedGens
+            .. " I:" .. #cachedItems
         if WatchOn then
             statL.Text = statL.Text .. " | 👁️ " .. watchTargetName
                 .. " " .. math.floor(watchTargetDist) .. "m"
@@ -875,6 +979,8 @@ updS(); updK()
 cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
+scanItems()
+rebuildItemHL()
 
-print("[Forsaken v1.7] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
-    "| Gens:", #cachedGens)
+print("[Forsaken v1.8] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+    "| Gens:", #cachedGens, "| Items:", #cachedItems)
