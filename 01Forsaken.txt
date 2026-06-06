@@ -1,5 +1,8 @@
--- 01Forsaken.txt — Forsaken Helper v1.4 (Survivor + Killer auto-detect)
--- v1.4: เพิ่ม STALK [K] — Survivor auto-walk ไปหลัง Killer + หลบกำแพง (animation เดินปกติ)
+-- 01Forsaken.txt — Forsaken Helper v1.5 (Survivor + Killer auto-detect)
+-- v1.5:
+--   * Watch (E) — หมุน HRP ตัวด้วย (ไม่ใช่แค่ camera) → กด W = วิ่งใส่ Survivor เลย
+--   * Stalk (K) — smart pause: ถ้า user กด WASD เอง / ใกล้พอแล้ว → ปล่อย user control
+-- v1.4: เพิ่ม STALK [K]
 -- v1.3:
 --   * FIX: Watch (E) — เลิกกรอง role (detect ผิด: Survivor เลือก char ชื่อ Noob ≠ Player.Name)
 --     → เล็งใครก็ได้ใกล้สุด (ไม่ใช่ตัวเอง) — ใช้ได้ทั้ง Killer (เห็น Survivor) + Survivor (เห็น Killer)
@@ -431,7 +434,15 @@ RunService:BindToRenderStep(WATCH_BIND, Enum.RenderPriority.Last.Value, function
     if not WatchOn or not LPRoot then return end
     local head, player, dist = findWatchTarget()
     if head then
-        Camera.CFrame = cf_lookAt(Camera.CFrame.Position, head.Position)
+        local tp = head.Position
+        -- 1. Camera หันไป target (เล็ง mouse aim)
+        Camera.CFrame = cf_lookAt(Camera.CFrame.Position, tp)
+        -- 2. HRP หันไป target (แนวราบ — Y คงที่) → กด W = วิ่งใส่
+        local myPos = LPRoot.Position
+        local lookPos = v3_new(tp.X, myPos.Y, tp.Z)
+        if (lookPos - myPos).Magnitude > 0.5 then
+            LPRoot.CFrame = CFrame.lookAt(myPos, lookPos)
+        end
         watchTargetName = player and player.Name or "?"
         watchTargetDist = dist or 0
     else
@@ -593,21 +604,31 @@ bind(RunService.Heartbeat, function()
         return
     end
 
-    -- หาจุดยืนหลัง Killer (หลีกกำแพง)
+    -- ── SMART PAUSE 1: user กด WASD อยู่ → ปล่อย user control (ช่วยเพื่อน/เดินเอง) ──
+    if LPHum.MoveDirection.Magnitude > 0.1 then
+        stalkStatus = string.format("⏸ user เดินเอง (d=%.0f)", nearestD)
+        return   -- ไม่ Move() → user คุมเองเต็มที่
+    end
+
+    -- ── SMART PAUSE 2: ใกล้ Killer พอแล้ว (≤ STALK_DIST) → ไม่ต้องเดินเข้าไปอีก ──
+    if nearestD <= STALK_DIST then
+        LPHum:Move(v3_new(0, 0, 0), false)   -- หยุดเดิน
+        stalkStatus = string.format("✓ ใกล้พอ (%.0fm)", nearestD)
+        return
+    end
+
+    -- ── ห่างเกิน → หาจุดหลัง Killer (หลีกกำแพง) → เดินไป ──
     local target, label = findStalkSpot(nearestRoot)
     if not target then
         stalkStatus = "all blocked"
         return
     end
-
-    -- เดินไปจุด target ผ่าน Humanoid:Move (animation play เอง, ไม่ teleport)
     local dir = target - fromPos
     dir = v3_new(dir.X, 0, dir.Z)
     if dir.Magnitude > 0.5 then
         LPHum:Move(dir.Unit, false)
         stalkStatus = string.format("→ %s d=%.0f", label, nearestD)
     else
-        -- ถึงแล้ว → หยุดเดิน
         LPHum:Move(v3_new(0, 0, 0), false)
         stalkStatus = string.format("✓ %s d=%.0f", label, nearestD)
     end
@@ -632,7 +653,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.4"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.5"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -865,5 +886,5 @@ cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.5] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
