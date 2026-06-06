@@ -1,4 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v1.9 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v2.0 (Survivor + Killer auto-detect)
+-- v2.0: FIX role detect → ใช้ Team/Attribute/ชื่อ list (เดิม char.Name == player.Name พลาด)
+--       FIX scan Gen/Item → recursive ทั้ง workspace.Map (เดิมแค่ Ingame/Map ตรงๆ พลาดถ้า nested)
+--       + auto rescan ทุก 3 วิ ตอน items เปลี่ยน (เข้า match ใหม่)
 -- v1.9: + ปุ่ม -/+ ปรับ d ของ STALK ได้ → แก้ตาม role ปัจจุบัน
 --       (Killer ปรับ STALK_DIST_KILLER, Survivor ปรับ STALK_DIST_SURVIVOR)
 -- v1.8: + ESP Items (Medkit/BloxyCola/etc.) — เหลือง = ไอเท็มตามพื้น
@@ -135,12 +138,43 @@ refreshViewport()
 bind(Camera:GetPropertyChangedSignal("ViewportSize"), refreshViewport)
 
 -- ==================== Role detect (Forsaken pattern) ====================
--- Char.Name == Player.Name → Survivor (Survivor outfit ใช้ display name)
--- Char.Name ~= Player.Name → Killer  (Slasher/Jason/007n7/1x1x1x1/etc.)
+-- v2: ลอง Team → Attribute → ชื่อ killer pattern → fallback
+-- รายชื่อ Killer ที่รู้: Slasher, 007n7, John Doe, Jason, 1x1x1x1, Dr.GameTheory,
+--                       C00lkidd, Two Time(?), etc.
+local KILLER_NAMES = {
+    ["Slasher"]=1, ["007n7"]=1, ["John Doe"]=1, ["Jason"]=1, ["1x1x1x1"]=1,
+    ["Dr.GameTheory"]=1, ["C00lkidd"]=1, ["JohnDoe"]=1, ["DrGameTheory"]=1,
+    ["Niko"]=1, ["Chance"]=1,
+}
+local SURVIVOR_NAMES = {
+    ["Noob"]=1, ["Builderman"]=1, ["Two Time"]=1, ["TwoTime"]=1, ["Shedletsky"]=1,
+    ["Taph"]=1, ["Guest 1337"]=1, ["Guest1337"]=1, ["Elliot"]=1,
+}
 local function detectRole(player, char)
-    if not char then return "survivor" end
-    if char.Name == player.Name then return "survivor" end
-    return "killer"
+    -- 1) Team (เชื่อถือได้สุด)
+    local tm = player.Team
+    if tm then
+        local tn = tm.Name:lower()
+        if tn:find("kill") or tn:find("slash") or tn:find("enemy") then return "killer" end
+        if tn:find("surv") or tn:find("victim") or tn:find("player") then return "survivor" end
+    end
+    -- 2) Attribute
+    local a = player:GetAttribute("Role") or player:GetAttribute("Team")
+        or player:GetAttribute("Class")
+    if type(a) == "string" then
+        local al = a:lower()
+        if al:find("kill") or al:find("slash") then return "killer" end
+        if al:find("surv") then return "survivor" end
+    end
+    -- 3) Char name ตาม list (รู้ก็เชื่อทันที)
+    if char then
+        if KILLER_NAMES[char.Name]   then return "killer"   end
+        if SURVIVOR_NAMES[char.Name] then return "survivor" end
+    end
+    -- 4) fallback: char.Name == player.Name → survivor (default Roblox char)
+    if char and char.Name == player.Name then return "survivor" end
+    -- 5) ถ้ายังเดาไม่ออก → survivor (เพราะ Killer มีตัวเดียว — กรณีหาไม่เจอมักผิดทาง Killer)
+    return "survivor"
 end
 
 -- ==================== LP Char + BodyVelocity ====================
@@ -314,6 +348,15 @@ local function setupPlayer(p)
         cacheChar(p, char)
     end)
     bind(p.CharacterRemoving, function() cacheChar(p, nil) end)
+    -- Team change → re-color HL
+    bind(p:GetPropertyChangedSignal("Team"), function()
+        if p.Character then
+            local newRole = detectRole(p, p.Character)
+            pCacheRole[p] = newRole
+            local hl = Highlights[p.Name]
+            if hl then pcall(function() hl.FillColor = colorFor(newRole) end) end
+        end
+    end)
 end
 
 for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
@@ -363,32 +406,20 @@ local function isGenCompleted(genModel)
 end
 
 local function scanGenerators()
-    -- path หลัก: Workspace.Map.Ingame.Map.Generator (หรือ Lobby.Interactive.Generator)
     cachedGens = {}
-    local function tryScan(parent)
-        if not parent then return end
-        for _, ch in pairs(parent:GetChildren()) do
-            if ch.Name == "Generator" and ch:IsA("Model") then
-                local prompt = ch:FindFirstChildWhichIsA("ProximityPrompt", true)
-                local part   = ch:FindFirstChildWhichIsA("BasePart", true)
-                if prompt and part then
-                    table.insert(cachedGens, { model = ch, prompt = prompt, part = part })
-                end
-            end
-        end
-    end
+    local seen = {}
     pcall(function()
         local map = workspace:FindFirstChild("Map")
-        if map then
-            local ig = map:FindFirstChild("Ingame")
-            if ig then
-                local m2 = ig:FindFirstChild("Map")
-                if m2 then tryScan(m2) end
-            end
-            local lobby = map:FindFirstChild("Lobby")
-            if lobby then
-                local int = lobby:FindFirstChild("Interactive")
-                if int then tryScan(int) end
+        if not map then return end
+        -- scan descendants → เจอ Generator model ที่ไหนก็เอา
+        for _, desc in pairs(map:GetDescendants()) do
+            if desc.Name == "Generator" and desc:IsA("Model") and not seen[desc] then
+                local prompt = desc:FindFirstChildWhichIsA("ProximityPrompt", true)
+                local part   = desc:FindFirstChildWhichIsA("BasePart", true)
+                if prompt and part then
+                    seen[desc] = true
+                    table.insert(cachedGens, { model = desc, prompt = prompt, part = part })
+                end
             end
         end
     end)
@@ -427,20 +458,27 @@ local function isItemModel(ch)
     return nil
 end
 
+-- รายชื่อไอเท็มที่รู้ (ใช้เป็น hint — แต่ที่จริง scan ด้วย ItemRoot ก็พอ)
+local KNOWN_ITEMS = {
+    ["Medkit"]=1, ["BloxyCola"]=1, ["Bandage"]=1, ["Vitamins"]=1,
+    ["EnergyDrink"]=1, ["Coffee"]=1, ["LollipopChainsaw"]=1, ["Wrench"]=1,
+    ["Battery"]=1, ["Flashlight"]=1, ["Crucifix"]=1, ["GreenHerb"]=1,
+}
+
 local function scanItems()
     cachedItems = {}
     pcall(function()
         local map = workspace:FindFirstChild("Map")
         if not map then return end
-        local ig = map:FindFirstChild("Ingame")
-        if not ig then return end
-        local m2 = ig:FindFirstChild("Map")
-        if not m2 then return end
-        for _, ch in pairs(m2:GetChildren()) do
-            if ch.Name ~= "Generator" then
-                local root = isItemModel(ch)
-                if root then
-                    table.insert(cachedItems, { model = ch, root = root, name = ch.Name })
+        -- scan descendants ของ workspace.Map → เจอ ItemRoot ที่ไหนก็เอา
+        -- (Forsaken match จริง: items อยู่ใต้ Map/Ingame/Map/<room>/<itemName>/ItemRoot)
+        local seen = {}
+        for _, desc in pairs(map:GetDescendants()) do
+            if desc.Name == "ItemRoot" and desc:IsA("BasePart") then
+                local m = desc.Parent
+                if m and m:IsA("Model") and m.Name ~= "Generator" and not seen[m] then
+                    seen[m] = true
+                    table.insert(cachedItems, { model = m, root = desc, name = m.Name })
                 end
             end
         end
@@ -752,7 +790,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.9"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.0"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1001,5 +1039,24 @@ rebuildGenHL()
 scanItems()
 rebuildItemHL()
 
-print("[Forsaken v1.9] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+-- watch workspace.Map → ใหม่/หาย → auto rescan (เข้า match จริงค่อยเจอ items)
+task.spawn(function()
+    while task.wait(3) do
+        if not _G.FRSN_CONNS or _G.FRSN_CONNS ~= CONNS then return end
+        local before = #cachedItems
+        scanItems()
+        if #cachedItems ~= before then
+            rebuildItemHL()
+            print("[FRSN] Items rescan:", #cachedItems)
+        end
+        local gBefore = #cachedGens
+        scanGenerators()
+        if #cachedGens ~= gBefore then
+            rebuildGenHL()
+            print("[FRSN] Gens rescan:", #cachedGens)
+        end
+    end
+end)
+
+print("[Forsaken v2.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
