@@ -1,4 +1,10 @@
--- 01Forsaken.txt — Forsaken Helper v1.2 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v1.3 (Survivor + Killer auto-detect)
+-- v1.3:
+--   * FIX: Watch (E) — เลิกกรอง role (detect ผิด: Survivor เลือก char ชื่อ Noob ≠ Player.Name)
+--     → เล็งใครก็ได้ใกล้สุด (ไม่ใช่ตัวเอง) — ใช้ได้ทั้ง Killer (เห็น Survivor) + Survivor (เห็น Killer)
+--   * FIX: Render priority Camera+1 (201) ไม่พอ — เปลี่ยนเป็น Last (2000) บังคับรันท้ายสุด
+--   * เพิ่ม status: "Watch: <name> @ Xm" — เห็นชัดว่า lock ใคร
+-- v1.2 (ไม่พอ):
 -- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan
 -- v1.2:
 --   * FIX: Watch (E) — Forsaken override Camera ใน RenderStep → เปลี่ยนเป็น BindToRenderStep
@@ -381,18 +387,18 @@ local function rebuildGenHL()
     end
 end
 
--- ==================== Find Watch target (เป้าที่ตรงข้าม role) ====================
--- Killer  → เล็ง Survivor ใกล้สุด
--- Survivor→ เล็ง Killer   ใกล้สุด (เพื่อเตือน/หนี)
+-- ==================== Find Watch target ====================
+-- v1.3: เลิกกรอง role (detect ไม่แม่น) → เล็งใครก็ได้ใกล้สุดที่ไม่ใช่ตัวเอง
+-- Killer: ใกล้สุดมักเป็น Survivor (Killer ตัวเดียว)
+-- Survivor: ใกล้สุดมักเป็น Killer (ถ้า killer ตามมา)
 local function findWatchTarget()
     if not LPRoot then return nil end
     local fromPos = LPRoot.Position
-    local wantRole = IS_KILLER and "survivor" or "killer"
     local bestHead, bestPlayer, bestDSq = nil, nil, math_huge
     for i = 1, targetCount do
         local p = activeTargets[i]
         local hum = pCacheHum[p]
-        if hum and hum.Health > 0 and pCacheRole[p] == wantRole then
+        if hum and hum.Health > 0 then
             local root = pCacheRoot[p]
             local head = pCacheHead[p]
             if head and root then
@@ -409,19 +415,25 @@ local function findWatchTarget()
     return bestHead, bestPlayer, math_sqrt(bestDSq)
 end
 
--- ==================== Watch (BindToRenderStep — priority > Camera) ====================
--- Forsaken ใช้ ShiftLock/first-person → game override Camera.CFrame ใน RenderStep.Camera
--- เราต้องรัน "หลัง" เกม → priority = Camera.Value + 1 (เลขมากกว่า = รันทีหลัง)
+-- ==================== Watch (BindToRenderStep — priority Last) ====================
+-- v1.3: Camera.Value+1 (201) ไม่พอ — Forsaken อาจ override ใน Character (300)
+-- → ใช้ Last (2000) บังคับรันท้ายสุดของ render frame → เขียนทับเกมได้ชัวร์
+local watchTargetName = "-"
+local watchTargetDist = 0
 local WATCH_BIND = "FRSN_Watch_Bind"
 pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
-RunService:BindToRenderStep(WATCH_BIND, Enum.RenderPriority.Camera.Value + 1, function()
+RunService:BindToRenderStep(WATCH_BIND, Enum.RenderPriority.Last.Value, function()
     if not WatchOn or not LPRoot then return end
-    local head, _, _ = findWatchTarget()
+    local head, player, dist = findWatchTarget()
     if head then
         Camera.CFrame = cf_lookAt(Camera.CFrame.Position, head.Position)
+        watchTargetName = player and player.Name or "?"
+        watchTargetDist = dist or 0
+    else
+        watchTargetName = "(no target)"
+        watchTargetDist = 0
     end
 end)
--- ผูก unbind เข้า cleanup pattern (ใช้ table-as-conn ที่มี :Disconnect)
 table.insert(CONNS, { Disconnect = function()
     pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
 end })
@@ -505,7 +517,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.2"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.3"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -671,6 +683,10 @@ task.spawn(function()
             if g.model and g.model.Parent and isGenCompleted(g.model) then done += 1 end
         end
         statL.Text = "P:" .. targetCount .. " G:" .. done .. "/" .. #cachedGens
+        if WatchOn then
+            statL.Text = statL.Text .. " | 👁️ " .. watchTargetName
+                .. " " .. math.floor(watchTargetDist) .. "m"
+        end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         roleL.Text = "Role: " .. (IS_KILLER and "🔪 KILLER" or "🟢 SURVIVOR")
         roleL.TextColor3 = IS_KILLER
@@ -694,5 +710,5 @@ cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
