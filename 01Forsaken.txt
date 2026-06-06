@@ -1,5 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v2.1 (Survivor + Killer auto-detect)
--- v2.1: Watch (E) → ล็อค role ตรงข้ามเท่านั้น (Killer→Survivor / Survivor→Killer)
+-- 01Forsaken.txt — Forsaken Helper v2.2 (Survivor + Killer auto-detect)
+-- v2.2: ย้าย Watch hotkey E → T (E ทับสกิลเกม)
+-- v2.1: Watch (T) → ล็อค role ตรงข้ามเท่านั้น (Killer→Survivor / Survivor→Killer)
 --       ถ้าหา enemy ไม่เจอ → fallback ใกล้สุด (มาร์ค ⚠️ ให้รู้)
 -- v2.0: FIX role detect → ใช้ Team/Attribute/ชื่อ list (เดิม char.Name == player.Name พลาด)
 --       FIX scan Gen/Item → recursive ทั้ง workspace.Map (เดิมแค่ Ingame/Map ตรงๆ พลาดถ้า nested)
@@ -21,7 +22,7 @@
 --   * FIX: Render priority Camera+1 (201) ไม่พอ — เปลี่ยนเป็น Last (2000) บังคับรันท้ายสุด
 --   * เพิ่ม status: "Watch: <name> @ Xm" — เห็นชัดว่า lock ใคร
 -- v1.2 (ไม่พอ):
--- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan
+-- Hotkeys: H=ESP | T=Watch(aim) | G=AutoGen | F=Speed | K=Stalk | R=Rescan
 -- v1.2:
 --   * FIX: Watch (E) — Forsaken override Camera ใน RenderStep → เปลี่ยนเป็น BindToRenderStep
 --     priority = Camera.Value + 1 (รันหลังเกม) → camera lock อยู่จริง
@@ -817,7 +818,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.1"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.2"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -848,7 +849,7 @@ end
 
 -- Buttons
 local espBtn    = mkBtn(3,  32,  132, 18, "ESP ON [H]",      Color3.fromRGB(180, 30, 100))
-local watchBtn  = mkBtn(3,  52,  132, 18, "Watch OFF [E]",   Color3.fromRGB(40, 60, 40))
+local watchBtn  = mkBtn(3,  52,  132, 18, "Watch OFF [T]",   Color3.fromRGB(40, 60, 40))
 local agenBtn   = mkBtn(3,  72,  132, 18, "AutoGen OFF [G]", Color3.fromRGB(40, 40, 80))
 local rescanBtn = mkBtn(3,  92,  132, 18, "Rescan [R]",      Color3.fromRGB(40, 60, 100))
 
@@ -905,7 +906,7 @@ statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
 hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/E/G/F/K/R"; hintL.TextScaled = true
+hintL.Text = "H/T/G/F/K/R"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -936,7 +937,7 @@ end
 local function toggleWatch()
     WatchOn = not WatchOn
     watchBtn.BackgroundColor3 = WatchOn and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(40, 60, 40)
-    watchBtn.Text = "Watch " .. (WatchOn and "ON" or "OFF") .. " [E]"
+    watchBtn.Text = "Watch " .. (WatchOn and "ON" or "OFF") .. " [T]"
 end
 
 local function toggleAutoGen()
@@ -1014,7 +1015,7 @@ bind(UIS.InputBegan, function(input, gp)
     if gp then return end
     local kc = input.KeyCode
     if     kc == Enum.KeyCode.H then toggleESP()
-    elseif kc == Enum.KeyCode.E then toggleWatch()
+    elseif kc == Enum.KeyCode.T then toggleWatch()
     elseif kc == Enum.KeyCode.G then toggleAutoGen()
     elseif kc == Enum.KeyCode.F then togS()
     elseif kc == Enum.KeyCode.K then togK()
@@ -1085,5 +1086,5 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v2.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
