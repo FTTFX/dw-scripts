@@ -1,5 +1,10 @@
--- 01Forsaken.txt — Forsaken Helper v1.1 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v1.2 (Survivor + Killer auto-detect)
 -- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan
+-- v1.2:
+--   * FIX: Watch (E) — Forsaken override Camera ใน RenderStep → เปลี่ยนเป็น BindToRenderStep
+--     priority = Camera.Value + 1 (รันหลังเกม) → camera lock อยู่จริง
+--   * FIX: AutoGen (G) — ลบ teleport (เกมแบน!) → ใกล้พอ ≤ 6 studs ค่อย fire prompt
+--     ผู้เล่นต้องเดินไปเอง (script แค่กด E ค้างให้)
 -- v1.1: Speed cap 30 (เกินนี้เกม revert) | ลบ Follow (ไม่ใช้)
 --
 -- Auto-detect role per frame:
@@ -404,16 +409,22 @@ local function findWatchTarget()
     return bestHead, bestPlayer, math_sqrt(bestDSq)
 end
 
--- ==================== Main loop ====================
-bind(RunService.RenderStepped, function()
-    -- Watch (aim เล็งเป้าตรงข้าม role)
-    if WatchOn and LPRoot then
-        local head, _, _ = findWatchTarget()
-        if head then
-            Camera.CFrame = cf_lookAt(Camera.CFrame.Position, head.Position)
-        end
+-- ==================== Watch (BindToRenderStep — priority > Camera) ====================
+-- Forsaken ใช้ ShiftLock/first-person → game override Camera.CFrame ใน RenderStep.Camera
+-- เราต้องรัน "หลัง" เกม → priority = Camera.Value + 1 (เลขมากกว่า = รันทีหลัง)
+local WATCH_BIND = "FRSN_Watch_Bind"
+pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
+RunService:BindToRenderStep(WATCH_BIND, Enum.RenderPriority.Camera.Value + 1, function()
+    if not WatchOn or not LPRoot then return end
+    local head, _, _ = findWatchTarget()
+    if head then
+        Camera.CFrame = cf_lookAt(Camera.CFrame.Position, head.Position)
     end
 end)
+-- ผูก unbind เข้า cleanup pattern (ใช้ table-as-conn ที่มี :Disconnect)
+table.insert(CONNS, { Disconnect = function()
+    pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
+end })
 
 -- ==================== Speed loop ====================
 bind(RunService.Heartbeat, function()
@@ -434,24 +445,27 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
--- ==================== AUTO-GEN loop (Survivor only) ====================
--- หา gen ใกล้สุดที่ยังไม่เสร็จ → วาปไปยืน → กดค้าง E ผ่าน fireproximityprompt
--- ⚠️ SkillCheck: ยังไม่ implement (รอ spy match จริงเพื่อหา UI element)
+-- ==================== AUTO-GEN loop (Survivor only) — NO TELEPORT ====================
+-- ห้ามวาป! เกมแบนถ้า server detect CFrame jump
+-- → script ทำแค่ fire prompt อัตโนมัติเมื่อผู้เล่นเดินมาใกล้ ≤ AUTOGEN_DIST
+-- → ใช้ ESP gen (cyan highlight) ช่วยมอง → เดินไปเอง → script กด E ค้างให้
+local AUTOGEN_DIST = 8   -- ระยะ ≤ นี้ studs ค่อย fire prompt (auto-press E)
+local autogenStatus = "idle"
 bind(RunService.Heartbeat, function()
-    if not AUTOGEN_ON then return end
-    if IS_KILLER then return end   -- Killer ไม่ปั่น gen
+    if not AUTOGEN_ON then autogenStatus = "off" return end
+    if IS_KILLER then autogenStatus = "killer (skip)" return end
     if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
     GEN_TICK += 1
-    if GEN_TICK % 6 ~= 0 then return end   -- ~10/วิ พอ
+    if GEN_TICK % 3 ~= 0 then return end   -- ~20/วิ (fire prompt บ่อยพอสำหรับ hold)
 
-    -- rescan ทุก 5 วิ
+    -- rescan gen ทุก 5 วิ (เผื่อเข้า match ใหม่)
     if clock() - lastGenScan > 5 then
         scanGenerators()
         rebuildGenHL()
         lastGenScan = clock()
     end
 
-    -- pick gen ใกล้สุดที่ยังไม่เสร็จ
+    -- หา gen ใกล้สุดที่ยังไม่เสร็จ + อยู่ในระยะ
     local fromPos = LPRoot.Position
     local best, bestD = nil, math_huge
     for _, g in pairs(cachedGens) do
@@ -460,18 +474,15 @@ bind(RunService.Heartbeat, function()
             if d < bestD then bestD = d best = g end
         end
     end
-    if not best then return end
+    if not best then autogenStatus = "no gen" return end
 
-    -- วาปไปยืนข้างเครื่อง + fire prompt
-    local genPos = best.part.Position
-    if bestD > 6 then
-        -- วาปเข้าไปใกล้
-        LPRoot.CFrame = CFrame.new(genPos + v3_new(0, 2, 3))
+    if bestD <= AUTOGEN_DIST then
+        -- ใกล้พอ → fire prompt (กดค้าง E แทนเรา)
+        pcall(function() fireproximityprompt(best.prompt) end)
+        autogenStatus = string.format("✓ ปั่น (%.1fm)", bestD)
     else
-        -- ใกล้แล้ว → fire prompt (กดค้าง)
-        pcall(function()
-            fireproximityprompt(best.prompt)
-        end)
+        -- ยังไกล → แสดงระยะ + ทิศ (ESP cyan ช่วยมอง)
+        autogenStatus = string.format("เดินไป Gen %.0fm", bestD)
     end
 end)
 
@@ -494,7 +505,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.1"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.2"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -660,6 +671,7 @@ task.spawn(function()
             if g.model and g.model.Parent and isGenCompleted(g.model) then done += 1 end
         end
         statL.Text = "P:" .. targetCount .. " G:" .. done .. "/" .. #cachedGens
+        if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         roleL.Text = "Role: " .. (IS_KILLER and "🔪 KILLER" or "🟢 SURVIVOR")
         roleL.TextColor3 = IS_KILLER
             and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 255, 130)
@@ -682,5 +694,5 @@ cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
