@@ -1,5 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v1.0 (Survivor + Killer auto-detect)
--- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan | P=Follow
+-- 01Forsaken.txt — Forsaken Helper v1.1 (Survivor + Killer auto-detect)
+-- Hotkeys: H=ESP | E=Watch(aim) | G=AutoGen | F=Speed | R=Rescan
+-- v1.1: Speed cap 30 (เกินนี้เกม revert) | ลบ Follow (ไม่ใช้)
 --
 -- Auto-detect role per frame:
 --   Char.Name == Player.Name  → Survivor (เขียว) — Auto-Gen ทำงาน
@@ -44,8 +45,7 @@ if _G.FRSN_CONNS then
         local pg = LP and LP:FindFirstChild("PlayerGui")
         if pg and pg:FindFirstChild("FRSNGUI") then pg.FRSNGUI:Destroy() end
     end)
-    if _G.FRSN_BV     then pcall(function() _G.FRSN_BV:Destroy()     end) end
-    if _G.FRSN_GOD_BP then pcall(function() _G.FRSN_GOD_BP:Destroy() end) end
+    if _G.FRSN_BV then pcall(function() _G.FRSN_BV:Destroy() end) end
 end
 _G.FRSN_CONNS  = {}
 _G.FRSN_HL     = {}    -- Player highlights
@@ -65,12 +65,9 @@ local ESPOn     = true
 local WatchOn   = false
 local SPEED_ON  = false
 local AUTOGEN_ON = false
-local FOLLOW_ON  = false
-local FACELOCK_ON = false
 
-local SPEED_VAL  = 28    -- max safe ~35 (เกินนี้เกม revert)
-local SPEED_MAX  = 35
-local FOLLOW_DIST = 8
+local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
+local SPEED_MAX  = 30
 local lastTick   = 0
 local GEN_TICK   = 0
 
@@ -478,61 +475,6 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
--- ==================== Follow Friend (Survivor) ====================
-local bpGod = nil
-local function destroyGodBP()
-    if bpGod then pcall(function() bpGod:Destroy() end) end
-    bpGod = nil
-    _G.FRSN_GOD_BP = nil
-end
-
-bind(RunService.Heartbeat, function()
-    if not FOLLOW_ON then
-        if bpGod then destroyGodBP() end
-        return
-    end
-    if not LPRoot or not LPHum or LPHum.Health <= 0 then
-        if bpGod then destroyGodBP() end
-        return
-    end
-    -- หา teammate (role เดียวกัน) ที่ใกล้สุด
-    local myRole = IS_KILLER and "killer" or "survivor"
-    local fromPos = LPRoot.Position
-    local nearestRoot, nearestDSq = nil, math_huge
-    for i = 1, targetCount do
-        local p = activeTargets[i]
-        local hum = pCacheHum[p]
-        if hum and hum.Health > 0 and pCacheRole[p] == myRole then
-            local root = pCacheRoot[p]
-            if root then
-                local dx = root.Position.X - fromPos.X
-                local dy = root.Position.Y - fromPos.Y
-                local dz = root.Position.Z - fromPos.Z
-                local dSq = dx*dx + dy*dy + dz*dz
-                if dSq < nearestDSq then nearestDSq, nearestRoot = dSq, root end
-            end
-        end
-    end
-    if not nearestRoot then
-        if bpGod then destroyGodBP() end
-        return
-    end
-    local look = nearestRoot.CFrame.LookVector
-    local tp   = nearestRoot.Position
-    local clampedY = math_max(tp.Y, LPRoot.Position.Y)
-    local targetPos = v3_new(tp.X - look.X * FOLLOW_DIST, clampedY, tp.Z - look.Z * FOLLOW_DIST)
-    if not bpGod or not bpGod.Parent then
-        if bpGod then pcall(function() bpGod:Destroy() end) end
-        bpGod = Instance.new("BodyPosition")
-        bpGod.MaxForce = v3_new(4e5, 4e5, 4e5)
-        bpGod.P = 1e4
-        bpGod.D = 1250
-        bpGod.Parent = LPRoot
-        _G.FRSN_GOD_BP = bpGod
-    end
-    bpGod.Position = targetPos
-end)
-
 -- ==================== GUI ====================
 local sg = Instance.new("ScreenGui")
 sg.Name = "FRSNGUI"; sg.ResetOnSpawn = false
@@ -540,8 +482,8 @@ pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LP:WaitForChild("PlayerGui", 5) end
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 138, 0, 280)
-f.Position = UDim2.new(0, 8, 0.5, -140)
+f.Size = UDim2.new(0, 138, 0, 224)
+f.Position = UDim2.new(0, 8, 0.5, -112)
 f.BackgroundColor3 = Color3.fromRGB(15, 10, 20)
 f.BackgroundTransparency = 0.1
 f.Parent = sg
@@ -552,7 +494,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.0"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.1"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -606,39 +548,20 @@ local sp1 = mkBtn(67,  132, 30, 14, "+1",   Color3.fromRGB(30, 80, 30))
 local sp5 = mkBtn(99,  132, 36, 14, "+5",   Color3.fromRGB(30, 120, 30))
 local sTog = mkBtn(3,  148, 132, 18, "Speed OFF [F]", Color3.fromRGB(40, 40, 80))
 
--- Follow row
-local fLbl = Instance.new("TextLabel")
-fLbl.Size = UDim2.new(0, 48, 0, 14); fLbl.Position = UDim2.new(0, 3, 0, 170)
-fLbl.BackgroundTransparency = 1; fLbl.TextColor3 = Color3.fromRGB(120, 220, 180)
-fLbl.Text = "FOLLOW"; fLbl.TextScaled = true
-fLbl.Font = Enum.Font.GothamBold; fLbl.TextXAlignment = Enum.TextXAlignment.Left
-fLbl.Parent = f
-local fVal = Instance.new("TextLabel")
-fVal.Size = UDim2.new(0, 36, 0, 14); fVal.Position = UDim2.new(1, -39, 0, 170)
-fVal.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
-fVal.TextColor3 = Color3.new(1, 1, 1); fVal.Text = tostring(FOLLOW_DIST)
-fVal.TextScaled = true; fVal.Font = Enum.Font.GothamBold; fVal.Parent = f
-Instance.new("UICorner", fVal).CornerRadius = UDim.new(0, 3)
-local fm5 = mkBtn(3,   186, 30, 14, "-5",   Color3.fromRGB(100, 40, 80))
-local fm1 = mkBtn(35,  186, 30, 14, "-1",   Color3.fromRGB(70, 30, 60))
-local fp1 = mkBtn(67,  186, 30, 14, "+1",   Color3.fromRGB(30, 80, 60))
-local fp5 = mkBtn(99,  186, 36, 14, "+5",   Color3.fromRGB(30, 120, 80))
-local followBtn = mkBtn(3, 202, 132, 18, "Follow OFF [P]", Color3.fromRGB(50, 50, 80))
-
 -- Status
 local divM = Instance.new("Frame")
-divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 226)
+divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 170)
 divM.BackgroundColor3 = Color3.fromRGB(80, 80, 80); divM.BorderSizePixel = 0
 divM.Parent = f
 local statL = Instance.new("TextLabel")
-statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 230)
+statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 174)
 statL.BackgroundTransparency = 1; statL.TextColor3 = Color3.fromRGB(200, 200, 100)
 statL.Text = "P:0 G:0/0"; statL.TextScaled = true
 statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
-hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 246)
+hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 190)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/E/G/F/R/P"; hintL.TextScaled = true
+hintL.Text = "H/E/G/F/R"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -694,17 +617,6 @@ local function updS()
 end
 local function togS() SPEED_ON = not SPEED_ON; updS() end
 
-local function updFollow()
-    fVal.Text = tostring(FOLLOW_DIST)
-    if FOLLOW_ON then
-        followBtn.BackgroundColor3 = Color3.fromRGB(30, 150, 100)
-        followBtn.Text = "Follow ON [P] =" .. FOLLOW_DIST
-    else
-        followBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
-        followBtn.Text = "Follow OFF [P]"
-    end
-end
-
 espBtn.MouseButton1Click:Connect(toggleESP)
 watchBtn.MouseButton1Click:Connect(toggleWatch)
 agenBtn.MouseButton1Click:Connect(toggleAutoGen)
@@ -724,12 +636,6 @@ sp1.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_V
 sp5.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_VAL + 5); updS() end)
 sTog.MouseButton1Click:Connect(togS)
 
-fm5.MouseButton1Click:Connect(function() FOLLOW_DIST = math_max(2, FOLLOW_DIST - 5); updFollow() end)
-fm1.MouseButton1Click:Connect(function() FOLLOW_DIST = math_max(2, FOLLOW_DIST - 1); updFollow() end)
-fp1.MouseButton1Click:Connect(function() FOLLOW_DIST = FOLLOW_DIST + 1; updFollow() end)
-fp5.MouseButton1Click:Connect(function() FOLLOW_DIST = FOLLOW_DIST + 5; updFollow() end)
-followBtn.MouseButton1Click:Connect(function() FOLLOW_ON = not FOLLOW_ON; updFollow() end)
-
 -- ==================== Hotkeys ====================
 bind(UIS.InputBegan, function(input, gp)
     if gp then return end
@@ -742,7 +648,6 @@ bind(UIS.InputBegan, function(input, gp)
         rescan(); scanGenerators(); rebuildGenHL()
         rescanBtn.Text = "Done!"
         task.delay(1.2, function() rescanBtn.Text = "Rescan [R]" end)
-    elseif kc == Enum.KeyCode.P then FOLLOW_ON = not FOLLOW_ON; updFollow()
     end
 end)
 
@@ -770,12 +675,12 @@ task.spawn(function()
     end
 end)
 
-updS(); updFollow()
+updS()
 
 -- ==================== INIT ====================
 cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
