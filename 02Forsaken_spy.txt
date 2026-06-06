@@ -1,0 +1,512 @@
+-- 02Forsaken_spy.txt — Forsaken Discovery Spy v1.0
+-- รัน ครั้งแรก ในเกม → ได้ข้อมูล:
+--   1) workspace top-level + map structure
+--   2) Players (Team, Attributes, Character) — แยก Killer vs Survivor
+--   3) Generators keyword scan (gen/repair) + ProximityPrompt + Completed BoolValue
+--   4) Items keyword scan (bandage/medkit/heal/key) + ProximityPrompt
+--   5) LocalPlayer Tools (Backpack + Character) — Killer weapon
+--   6) PlayerGui — SkillCheck / hotbar
+--   7) LIVE: hook __namecall (RemoteEvent FireServer) — log ทุก action
+--   8) LIVE: hook Tool.Activated — วัดระยะ player→nearest player ตอนตี (= MELEE_DIST)
+--
+-- วิธีใช้:
+--   1. รัน script → tab STATIC โผล่ผลทันที
+--   2. กดปุ่ม LIVE → เริ่ม hook (เห็น RemoteEvent ที่ถูก fire ตอน action)
+--   3. ลองตี/ยิง/ปั่นเครื่อง → log จะปรากฏ + วัดระยะให้
+--   4. กด Copy → setclipboard → เอามาให้ผม
+
+local LP  = game.Players.LocalPlayer
+local RS  = game:GetService("RunService")
+local Players = game:GetService("Players")
+local pg  = LP:WaitForChild("PlayerGui")
+
+-- ──────────── 1) Guard ────────────
+local old = pg:FindFirstChild("FRSNSpyGUI")
+if old then old:Destroy() end
+if _G.FRSN_SPY_HOOK then
+    -- ปลด hook เก่า (ถ้ามี)
+    pcall(function() _G.FRSN_SPY_HOOK() end)
+end
+
+-- ──────────── 2) GUI ────────────
+local gui = Instance.new("ScreenGui")
+gui.Name = "FRSNSpyGUI"; gui.ResetOnSpawn = false; gui.Parent = pg
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 620, 0, 520)
+frame.Position = UDim2.new(0.5, -310, 0.5, -260)
+frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+frame.BorderSizePixel = 0; frame.Active = true; frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 28)
+titleBar.BackgroundColor3 = Color3.fromRGB(80, 20, 60)
+titleBar.BorderSizePixel = 0; titleBar.Parent = frame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 8)
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.Size = UDim2.new(1, -10, 1, 0)
+titleLbl.Position = UDim2.new(0, 10, 0, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.TextColor3 = Color3.fromRGB(255, 180, 220)
+titleLbl.Text = "Forsaken Spy v1.0 — กำลัง scan..."
+titleLbl.Font = Enum.Font.Code; titleLbl.TextSize = 12
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = titleBar
+
+-- Tabs
+local function mkTab(x, w, txt, col)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, w, 0, 24)
+    b.Position = UDim2.new(0, x, 0, 30)
+    b.BackgroundColor3 = col
+    b.TextColor3 = Color3.fromRGB(240, 240, 240)
+    b.Text = txt; b.Font = Enum.Font.Code; b.TextSize = 12
+    b.BorderSizePixel = 0; b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    return b
+end
+local tabStatic = mkTab(4,   100, "STATIC",  Color3.fromRGB(30, 80, 150))
+local tabLive   = mkTab(108, 100, "LIVE",    Color3.fromRGB(80, 30, 30))
+local tabCopy   = mkTab(212, 100, "Copy",    Color3.fromRGB(30, 100, 50))
+
+-- Scroll (STATIC)
+local function mkScroll()
+    local s = Instance.new("ScrollingFrame")
+    s.Size = UDim2.new(1, -8, 1, -98)
+    s.Position = UDim2.new(0, 4, 0, 58)
+    s.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+    s.BorderSizePixel = 0; s.ScrollBarThickness = 5
+    s.CanvasSize = UDim2.new(0, 0, 0, 0); s.Parent = frame
+    Instance.new("UICorner", s).CornerRadius = UDim.new(0, 4)
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder; layout.Parent = s
+    local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 6); pad.Parent = s
+    return s, layout
+end
+local scrollStatic, layoutS = mkScroll()
+local scrollLive,   layoutL = mkScroll()
+scrollLive.Visible = false
+
+-- Copy box
+local copyBox = Instance.new("TextBox")
+copyBox.Size = UDim2.new(1, -8, 1, -98)
+copyBox.Position = UDim2.new(0, 4, 0, 58)
+copyBox.BackgroundColor3 = Color3.fromRGB(8, 8, 14)
+copyBox.TextColor3 = Color3.fromRGB(180, 255, 180)
+copyBox.Font = Enum.Font.Code; copyBox.TextSize = 11
+copyBox.TextXAlignment = Enum.TextXAlignment.Left
+copyBox.TextYAlignment = Enum.TextYAlignment.Top
+copyBox.MultiLine = true; copyBox.ClearTextOnFocus = false
+copyBox.Text = "รอ scan..."; copyBox.BorderSizePixel = 0
+copyBox.Visible = false; copyBox.Parent = frame
+Instance.new("UICorner", copyBox).CornerRadius = UDim.new(0, 4)
+local padBox = Instance.new("UIPadding")
+padBox.PaddingLeft = UDim.new(0, 6); padBox.PaddingTop = UDim.new(0, 4)
+padBox.Parent = copyBox
+
+-- Bottom buttons
+local function mkBtn(x, w, txt, col, fg)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, w, 0, 30)
+    b.Position = UDim2.new(0, x, 1, -34)
+    b.BackgroundColor3 = col
+    b.TextColor3 = fg or Color3.fromRGB(240, 240, 240)
+    b.Text = txt; b.Font = Enum.Font.Code; b.TextSize = 12
+    b.BorderSizePixel = 0; b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+    return b
+end
+local liveBtn  = mkBtn(4,   140, "▶ Start LIVE hook", Color3.fromRGB(60, 20, 20))
+local clearBtn = mkBtn(148, 80,  "Clear LIVE",        Color3.fromRGB(40, 40, 60))
+local copyBtn  = mkBtn(232, 80,  "Copy",              Color3.fromRGB(30, 100, 50))
+local closeBtn = mkBtn(540, 76,  "ปิด",                Color3.fromRGB(120, 20, 20))
+
+-- ──────────── 3) Helper ────────────
+local staticLines, liveLines = {}, {}
+local orderS, orderL = 0, 0
+local C = {
+    Y = Color3.fromRGB(255, 210,   0),
+    G = Color3.fromRGB( 80, 255, 120),
+    B = Color3.fromRGB(140, 160, 255),
+    O = Color3.fromRGB(255, 160,  50),
+    W = Color3.fromRGB(210, 210, 210),
+    S = Color3.fromRGB(140, 140, 140),
+    R = Color3.fromRGB(255,  80,  80),
+    M = Color3.fromRGB(255, 100, 200),  -- magenta สำหรับ LIVE
+}
+
+local function addLineTo(scroll, layout, lines, store, txt, col)
+    if scroll == scrollStatic then orderS += 1 else orderL += 1 end
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -12, 0, 15); lbl.BackgroundTransparency = 1
+    lbl.Font = Enum.Font.Code; lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.TextTruncate = Enum.TextTruncate.AtEnd
+    lbl.TextColor3 = col or C.W; lbl.Text = txt
+    lbl.LayoutOrder = scroll == scrollStatic and orderS or orderL
+    lbl.Parent = scroll
+    table.insert(lines, txt)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+end
+local function addS(txt, col) addLineTo(scrollStatic, layoutS, staticLines, true, txt, col) end
+local function addL(txt, col) addLineTo(scrollLive,   layoutL, liveLines,   true, txt, col)
+    -- auto-scroll bottom
+    scrollLive.CanvasPosition = Vector2.new(0, math.huge)
+end
+
+-- Tab switch
+local function showTab(which)
+    scrollStatic.Visible = which == "static"
+    scrollLive.Visible   = which == "live"
+    copyBox.Visible      = which == "copy"
+    tabStatic.BackgroundColor3 = which == "static" and Color3.fromRGB(30, 80, 150) or Color3.fromRGB(20, 40, 80)
+    tabLive.BackgroundColor3   = which == "live"   and Color3.fromRGB(120, 30, 30) or Color3.fromRGB(50, 20, 20)
+    tabCopy.BackgroundColor3   = which == "copy"   and Color3.fromRGB(30, 130, 50) or Color3.fromRGB(20, 60, 30)
+    if which == "copy" then
+        -- รวม static + live
+        local all = {}
+        for _, l in ipairs(staticLines) do table.insert(all, l) end
+        table.insert(all, "")
+        table.insert(all, "===== LIVE LOG =====")
+        for _, l in ipairs(liveLines) do table.insert(all, l) end
+        copyBox.Text = table.concat(all, "\n")
+        copyBox:CaptureFocus()
+        copyBox.SelectionStart = 1
+        copyBox.CursorPosition = #copyBox.Text + 1
+    end
+end
+tabStatic.MouseButton1Click:Connect(function() showTab("static") end)
+tabLive.MouseButton1Click:Connect(function() showTab("live") end)
+tabCopy.MouseButton1Click:Connect(function() showTab("copy") end)
+
+copyBtn.MouseButton1Click:Connect(function()
+    local all = {}
+    for _, l in ipairs(staticLines) do table.insert(all, l) end
+    table.insert(all, "")
+    table.insert(all, "===== LIVE LOG =====")
+    for _, l in ipairs(liveLines) do table.insert(all, l) end
+    local full = table.concat(all, "\n")
+    local clip = setclipboard or toclipboard or write_clipboard
+        or (getgenv and getgenv().setclipboard)
+    local ok = clip and pcall(clip, full)
+    copyBtn.Text = ok and "Copied!" or "ใช้ Copy tab"
+    task.delay(2, function() if copyBtn.Parent then copyBtn.Text = "Copy" end end)
+end)
+
+clearBtn.MouseButton1Click:Connect(function()
+    for _, ch in pairs(scrollLive:GetChildren()) do
+        if ch:IsA("TextLabel") then ch:Destroy() end
+    end
+    table.clear(liveLines); orderL = 0
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    if _G.FRSN_SPY_HOOK then pcall(function() _G.FRSN_SPY_HOOK() end) end
+    gui:Destroy()
+end)
+
+showTab("static")
+
+-- ──────────── 4) STATIC SCAN (task.spawn) ────────────
+task.spawn(function()
+    task.wait(0.1)
+
+    -- helper: ตัด path ยาวๆ ให้สั้น
+    local function shortPath(obj, maxParts)
+        maxParts = maxParts or 4
+        local full = obj:GetFullName()
+        local parts = {}
+        for p in full:gmatch("[^.]+") do table.insert(parts, p) end
+        if #parts <= maxParts then return full end
+        return "…" .. table.concat(parts, ".", #parts - maxParts + 1)
+    end
+
+    -- ═══ A. WORKSPACE TOP-LEVEL ═══
+    addS("=== A. WORKSPACE TOP-LEVEL ===", C.Y)
+    pcall(function()
+        for _, ch in pairs(workspace:GetChildren()) do
+            addS("[" .. ch.ClassName .. "] " .. ch.Name, C.W)
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ B. PLAYERS — Team, Attributes, Character ═══
+    addS("=== B. PLAYERS (Team / Attribute / Character) ===", C.Y)
+    pcall(function()
+        for _, p in pairs(Players:GetPlayers()) do
+            local me = p == LP and " ⭐ ME" or ""
+            local team = p.Team and p.Team.Name or "(no team)"
+            addS("• " .. p.Name .. me .. " | Team=" .. team, C.G)
+            -- Attributes
+            local attrs = p:GetAttributes()
+            for k, v in pairs(attrs) do
+                addS("    @" .. k .. " = " .. tostring(v), C.B)
+            end
+            -- Character
+            if p.Character then
+                addS("    Char=" .. p.Character.Name, C.W)
+                -- หา Tool / weapon ในมือ
+                for _, ch in pairs(p.Character:GetChildren()) do
+                    if ch:IsA("Tool") then
+                        addS("    Tool=" .. ch.Name, C.O)
+                    end
+                end
+            end
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ C. TEAMS (Teams service) ═══
+    addS("=== C. TEAMS ===", C.Y)
+    pcall(function()
+        local Teams = game:GetService("Teams")
+        for _, t in pairs(Teams:GetChildren()) do
+            local cnt = #t:GetPlayers()
+            addS("• " .. t.Name .. " (" .. cnt .. " players)", C.G)
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ D. GENERATORS scan ═══
+    addS("=== D. GENERATORS (keyword: gen/repair/generator) ===", C.Y)
+    local genCount = 0
+    local GEN_KW = {"generator", "gen", "repair", "machine", "fix"}
+    pcall(function()
+        for _, obj in pairs(workspace:GetDescendants()) do
+            local n = obj.Name:lower()
+            local match = false
+            for _, kw in pairs(GEN_KW) do
+                if n:find(kw) then match = true break end
+            end
+            if match and (obj:IsA("Model") or obj:IsA("Folder")) then
+                genCount += 1
+                addS("[" .. obj.ClassName .. "] " .. obj.Name, C.G)
+                addS("    " .. shortPath(obj, 5), C.B)
+                -- หา ProximityPrompt ลูก
+                local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if prompt then
+                    addS("    + Prompt: act=" .. prompt.ActionText
+                        .. " obj=" .. prompt.ObjectText, C.O)
+                end
+                -- หา BoolValue Completed
+                local comp = obj:FindFirstChild("Completed", true)
+                if comp then
+                    addS("    + Completed=" .. tostring(comp.Value), C.O)
+                end
+                if genCount >= 30 then addS("(... limit 30)", C.S) break end
+            end
+        end
+    end)
+    addS("รวม Generator candidate: " .. genCount, C.Y)
+    addS("", C.S)
+
+    -- ═══ E. ITEMS scan ═══
+    addS("=== E. ITEMS (keyword: bandage/medkit/heal/key/item) ===", C.Y)
+    local itemCount = 0
+    local ITEM_KW = {"bandage", "medkit", "heal", "key", "item", "capsule", "battery"}
+    pcall(function()
+        for _, obj in pairs(workspace:GetDescendants()) do
+            local n = obj.Name:lower()
+            local match = false
+            for _, kw in pairs(ITEM_KW) do
+                if n:find(kw) then match = true break end
+            end
+            if match and (obj:IsA("Model") or obj:IsA("BasePart")) then
+                itemCount += 1
+                addS("[" .. obj.ClassName .. "] " .. obj.Name, C.G)
+                addS("    " .. shortPath(obj, 5), C.B)
+                local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                if prompt then
+                    addS("    + Prompt: act=" .. prompt.ActionText, C.O)
+                end
+                if itemCount >= 30 then addS("(... limit 30)", C.S) break end
+            end
+        end
+    end)
+    addS("รวม Item candidate: " .. itemCount, C.Y)
+    addS("", C.S)
+
+    -- ═══ F. LOCAL PLAYER TOOLS (Backpack + Character) ═══
+    addS("=== F. MY TOOLS (Backpack + Character) ===", C.Y)
+    pcall(function()
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then
+            for _, tool in pairs(bp:GetChildren()) do
+                addS("[BP] " .. tool.Name .. " (" .. tool.ClassName .. ")", C.G)
+                if tool:IsA("Tool") then
+                    -- list children (handle/animation/script)
+                    for _, ch in pairs(tool:GetChildren()) do
+                        addS("    + " .. ch.ClassName .. " " .. ch.Name, C.S)
+                    end
+                end
+            end
+        else
+            addS("(ไม่มี Backpack)", C.O)
+        end
+        if LP.Character then
+            for _, ch in pairs(LP.Character:GetChildren()) do
+                if ch:IsA("Tool") then
+                    addS("[Equipped] " .. ch.Name, C.G)
+                end
+            end
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ G. PLAYER GUI (SkillCheck / Hotbar / HUD) ═══
+    addS("=== G. PLAYER GUI (top-level) ===", C.Y)
+    pcall(function()
+        for _, sg in pairs(pg:GetChildren()) do
+            if sg:IsA("ScreenGui") then
+                addS("[ScreenGui] " .. sg.Name, C.G)
+                -- ลูกตรง
+                for _, ch in pairs(sg:GetChildren()) do
+                    if ch:IsA("Frame") or ch:IsA("GuiObject") then
+                        addS("    + " .. ch.ClassName .. " " .. ch.Name, C.W)
+                    end
+                end
+            end
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ H. REMOTES (ReplicatedStorage scan) ═══
+    addS("=== H. REMOTES (ReplicatedStorage) ===", C.Y)
+    pcall(function()
+        local rs = game:GetService("ReplicatedStorage")
+        local cnt = 0
+        for _, obj in pairs(rs:GetDescendants()) do
+            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                cnt += 1
+                addS("[" .. obj.ClassName .. "] " .. obj.Name, C.G)
+                if cnt >= 40 then addS("(... limit 40)", C.S) break end
+            end
+        end
+        addS("รวม remote: " .. cnt, C.Y)
+    end)
+    addS("", C.S)
+
+    addS("=== STATIC scan เสร็จแล้ว — กด LIVE ต่อ ===", C.Y)
+    titleLbl.Text = "Forsaken Spy v1.0 — STATIC เสร็จ (กด ▶ LIVE)"
+    warn("[FRSN_SPY] STATIC scan เสร็จ")
+end)
+
+-- ──────────── 5) LIVE HOOK (เริ่มเมื่อกดปุ่ม) ────────────
+local liveOn = false
+local origNamecall
+local hookConns = {}
+
+local function startLive()
+    if liveOn then return end
+    liveOn = true
+    liveBtn.Text = "■ Stop LIVE"
+    liveBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 20)
+    addL("=== LIVE hook started @ " .. os.date("%H:%M:%S") .. " ===", C.Y)
+    addL("ลองทำ action: ตี / ยิง / ปั่นเครื่อง / กดของ", C.S)
+    addL("", C.S)
+
+    -- ── 5a. Hook __namecall (RemoteEvent:FireServer / :InvokeServer) ──
+    local mt = getrawmetatable and getrawmetatable(game)
+    if mt and setreadonly and hookmetamethod then
+        pcall(function() setreadonly(mt, false) end)
+        origNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            if (method == "FireServer" or method == "InvokeServer") and liveOn then
+                local args = {...}
+                local argStr = ""
+                for i, v in ipairs(args) do
+                    local tp = typeof(v)
+                    if tp == "Instance" then
+                        argStr = argStr .. "[" .. v.ClassName .. ":" .. v.Name .. "]"
+                    elseif tp == "Vector3" then
+                        argStr = argStr .. string.format("(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z)
+                    elseif tp == "table" then
+                        argStr = argStr .. "{tbl}"
+                    else
+                        argStr = argStr .. tostring(v)
+                    end
+                    if i < #args then argStr = argStr .. ", " end
+                end
+                task.spawn(function()
+                    addL("🌐 " .. method .. " " .. self.Name .. " (" .. argStr .. ")", C.M)
+                end)
+            end
+            return origNamecall(self, ...)
+        end)
+        pcall(function() setreadonly(mt, true) end)
+        addL("✅ __namecall hook สำเร็จ", C.G)
+    else
+        addL("⚠️ executor ไม่รองรับ hookmetamethod — ข้าม remote hook", C.O)
+    end
+
+    -- ── 5b. Hook Tool.Activated — วัดระยะตอนตี ──
+    local function hookTool(tool)
+        if not tool:IsA("Tool") then return end
+        local c = tool.Activated:Connect(function()
+            if not liveOn then return end
+            local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            -- หา player ใกล้สุด + ระยะ
+            local bestName, bestD = nil, math.huge
+            for _, p in pairs(Players:GetPlayers()) do
+                if p ~= LP and p.Character then
+                    local rp = p.Character:FindFirstChild("HumanoidRootPart")
+                    if rp then
+                        local d = (hrp.Position - rp.Position).Magnitude
+                        if d < bestD then bestD = d bestName = p.Name end
+                    end
+                end
+            end
+            task.spawn(function()
+                if bestName then
+                    addL(string.format("🗡️ Activated [%s] | nearest=%s @ %.1f studs",
+                        tool.Name, bestName, bestD), C.M)
+                else
+                    addL("🗡️ Activated [" .. tool.Name .. "] (ไม่มีผู้เล่นอื่น)", C.M)
+                end
+            end)
+        end)
+        table.insert(hookConns, c)
+    end
+    -- hook tools ที่มีตอนนี้
+    pcall(function()
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then for _, t in pairs(bp:GetChildren()) do hookTool(t) end end
+        if LP.Character then for _, t in pairs(LP.Character:GetChildren()) do hookTool(t) end end
+    end)
+    -- hook tools ใหม่ (เพิ่ม backpack/equip)
+    local bp = LP:FindFirstChild("Backpack")
+    if bp then
+        table.insert(hookConns, bp.ChildAdded:Connect(hookTool))
+    end
+    if LP.Character then
+        table.insert(hookConns, LP.Character.ChildAdded:Connect(hookTool))
+    end
+    addL("✅ Tool.Activated hook สำเร็จ", C.G)
+
+    -- ── 5c. รายงาน HumanoidState ตอนตี (ดู ChangeState) ──
+    -- (เพิ่มทีหลังถ้าจำเป็น)
+end
+
+local function stopLive()
+    if not liveOn then return end
+    liveOn = false
+    liveBtn.Text = "▶ Start LIVE hook"
+    liveBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+    for _, c in pairs(hookConns) do pcall(function() c:Disconnect() end) end
+    hookConns = {}
+    -- หมายเหตุ: __namecall hook ปลดยาก ปล่อยไว้ flag liveOn=false จะไม่ log
+    addL("=== LIVE stopped ===", C.Y)
+end
+
+_G.FRSN_SPY_HOOK = stopLive   -- ให้ guard ครั้งหน้าปลดได้
+
+liveBtn.MouseButton1Click:Connect(function()
+    if liveOn then stopLive() else startLive() end
+end)
+
+warn("[FRSN_SPY] Forsaken Spy v1.0 loaded — STATIC scanning... กด ▶ LIVE เพื่อ hook")
