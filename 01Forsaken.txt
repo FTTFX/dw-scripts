@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v1.8 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v1.9 (Survivor + Killer auto-detect)
+-- v1.9: + ปุ่ม -/+ ปรับ d ของ STALK ได้ → แก้ตาม role ปัจจุบัน
+--       (Killer ปรับ STALK_DIST_KILLER, Survivor ปรับ STALK_DIST_SURVIVOR)
 -- v1.8: + ESP Items (Medkit/BloxyCola/etc.) — เหลือง = ไอเท็มตามพื้น
 --       scan Workspace.Map.Ingame.Map.<name>.ItemRoot → highlight + label ชื่อ + ระยะ
 -- v1.7: STALK ระยะอัตโนมัติตาม role (Killer=2, Survivor=22)
@@ -738,8 +740,8 @@ pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LP:WaitForChild("PlayerGui", 5) end
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 138, 0, 260)
-f.Position = UDim2.new(0, 8, 0.5, -130)
+f.Size = UDim2.new(0, 138, 0, 276)
+f.Position = UDim2.new(0, 8, 0.5, -138)
 f.BackgroundColor3 = Color3.fromRGB(15, 10, 20)
 f.BackgroundTransparency = 0.1
 f.Parent = sg
@@ -750,7 +752,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.8"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.9"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -818,20 +820,25 @@ kVal.TextColor3 = Color3.new(1, 1, 1)
 kVal.Text = "d=" .. effStalkDist()
 kVal.TextScaled = true; kVal.Font = Enum.Font.GothamBold; kVal.Parent = f
 Instance.new("UICorner", kVal).CornerRadius = UDim.new(0, 3)
-local kTog = mkBtn(3, 186, 132, 18, "Stalk OFF [K]", Color3.fromRGB(50, 30, 60))
+-- Stalk distance -/+ row
+local km5 = mkBtn(3,   186, 30, 14, "-5",   Color3.fromRGB(120, 30, 30))
+local km1 = mkBtn(35,  186, 30, 14, "-1",   Color3.fromRGB(80, 30, 30))
+local kp1 = mkBtn(67,  186, 30, 14, "+1",   Color3.fromRGB(30, 80, 30))
+local kp5 = mkBtn(99,  186, 36, 14, "+5",   Color3.fromRGB(30, 120, 30))
+local kTog = mkBtn(3, 202, 132, 18, "Stalk OFF [K]", Color3.fromRGB(50, 30, 60))
 
 -- Status
 local divM = Instance.new("Frame")
-divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 208)
+divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 224)
 divM.BackgroundColor3 = Color3.fromRGB(80, 80, 80); divM.BorderSizePixel = 0
 divM.Parent = f
 local statL = Instance.new("TextLabel")
-statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 212)
+statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 228)
 statL.BackgroundTransparency = 1; statL.TextColor3 = Color3.fromRGB(200, 200, 100)
 statL.Text = "P:0 G:0/0"; statL.TextScaled = true
 statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
-hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 228)
+hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
 hintL.Text = "H/E/G/F/K/R"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
@@ -922,7 +929,19 @@ sp1.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_V
 sp5.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_VAL + 5); updS() end)
 sTog.MouseButton1Click:Connect(togS)
 
--- Stalk toggle (distance fixed by role: Killer=2, Survivor=22)
+-- Stalk distance adjust (ปรับค่าของ role ปัจจุบัน)
+local function adjK(delta)
+    if IS_KILLER then
+        STALK_DIST_KILLER = math_clamp(STALK_DIST_KILLER + delta, 1, 60)
+    else
+        STALK_DIST_SURVIVOR = math_clamp(STALK_DIST_SURVIVOR + delta, 1, 60)
+    end
+    updK()
+end
+km5.MouseButton1Click:Connect(function() adjK(-5) end)
+km1.MouseButton1Click:Connect(function() adjK(-1) end)
+kp1.MouseButton1Click:Connect(function() adjK(1)  end)
+kp5.MouseButton1Click:Connect(function() adjK(5)  end)
 kTog.MouseButton1Click:Connect(togK)
 
 -- ==================== Hotkeys ====================
@@ -982,5 +1001,5 @@ rebuildGenHL()
 scanItems()
 rebuildItemHL()
 
-print("[Forsaken v1.8] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.9] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
