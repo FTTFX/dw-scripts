@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v2.2 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v2.3 (Survivor + Killer auto-detect)
+-- v2.3: + Role Debug — print Teams + Attributes ทุกคนใน console (F9)
+--       กด Z = print ซ้ำ (หลังเข้า match จริง)
 -- v2.2: ย้าย Watch hotkey E → T (E ทับสกิลเกม)
 -- v2.1: Watch (T) → ล็อค role ตรงข้ามเท่านั้น (Killer→Survivor / Survivor→Killer)
 --       ถ้าหา enemy ไม่เจอ → fallback ใกล้สุด (มาร์ค ⚠️ ให้รู้)
@@ -818,7 +820,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.2"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.3"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1086,5 +1088,51 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v2.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
+
+-- ==================== ROLE DEBUG ====================
+-- print Team + Attribute ของผู้เล่นทุกคน → ใช้ปรับ detect logic
+local function debugRoles()
+    print("════════ [FRSN ROLE DEBUG] ════════")
+    -- 1. Teams service
+    local TeamsSvc = game:GetService("Teams")
+    local teams = TeamsSvc:GetTeams()
+    print("Teams in service:", #teams)
+    for i, t in ipairs(teams) do
+        print(string.format("  [%d] '%s' color=%s", i, t.Name, tostring(t.TeamColor)))
+    end
+    -- 2. ทุก player → Team / Attributes / Char name
+    print("Players:")
+    for _, p in ipairs(Players:GetPlayers()) do
+        local tm = p.Team and p.Team.Name or "(no team)"
+        local chName = p.Character and p.Character.Name or "(no char)"
+        local attrStr = ""
+        for k, v in pairs(p:GetAttributes()) do
+            attrStr = attrStr .. k .. "=" .. tostring(v) .. " "
+        end
+        local me = (p == LP) and " [ME]" or ""
+        print(string.format("  %s%s | Team=%s | Char=%s | Attr={%s}",
+            p.Name, me, tm, chName, attrStr))
+    end
+    print("LP.Character attributes:")
+    if LPChar then
+        for k, v in pairs(LPChar:GetAttributes()) do
+            print("  Char attr:", k, "=", v)
+        end
+        if LPHum then
+            print("  Hum attributes:")
+            for k, v in pairs(LPHum:GetAttributes()) do
+                print("    ", k, "=", v)
+            end
+        end
+    end
+    print("══════════════════════════════════")
+end
+debugRoles()
+
+-- กด Z เพื่อ print ซ้ำ (หลังเข้า match แล้ว)
+bind(UIS.InputBegan, function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.Z then debugRoles() end
+end)
