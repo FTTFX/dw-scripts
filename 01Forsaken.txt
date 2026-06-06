@@ -1,4 +1,5 @@
--- 01Forsaken.txt — Forsaken Helper v1.3 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v1.4 (Survivor + Killer auto-detect)
+-- v1.4: เพิ่ม STALK [K] — Survivor auto-walk ไปหลัง Killer + หลบกำแพง (animation เดินปกติ)
 -- v1.3:
 --   * FIX: Watch (E) — เลิกกรอง role (detect ผิด: Survivor เลือก char ชื่อ Noob ≠ Player.Name)
 --     → เล็งใครก็ได้ใกล้สุด (ไม่ใช่ตัวเอง) — ใช้ได้ทั้ง Killer (เห็น Survivor) + Survivor (เห็น Killer)
@@ -76,9 +77,13 @@ local ESPOn     = true
 local WatchOn   = false
 local SPEED_ON  = false
 local AUTOGEN_ON = false
+local STALK_ON  = false
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
+local STALK_DIST    = 8        -- ระยะห่างจาก Killer (studs) — ปรับใน GUI 3-20
+local STALK_TRIGGER = 50       -- เริ่ม stalk เมื่อ Killer ใกล้ ≤ นี้ studs
+local STALK_SPEED   = 29       -- WalkSpeed ตอน stalk (เกมเดิม 16) — max 29
 local lastTick   = 0
 local GEN_TICK   = 0
 
@@ -498,6 +503,116 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
+-- ==================== STALK (Survivor: walk to behind Killer) ====================
+-- ทำงานเสมอเมื่อเปิด (ไม่กรอง role เพราะ detect อาจผิด)
+-- ใช้ Humanoid:Move() = เดินปกติ + animation play เอง = ไม่ teleport = ปลอดภัย
+-- ระยะหลัง Killer ปรับใน GUI | หลังเป็นกำแพง → ลอง Right → ลอง Left
+local stalkStatus   = "idle"
+local origWalkSpeed = nil   -- เก็บ WalkSpeed เดิม restore ตอน OFF
+
+-- raycast เช็คกำแพงระหว่าง 2 จุด (exclude characters + hitboxes)
+local stalkRayParams = RaycastParams.new()
+stalkRayParams.FilterType = Enum.RaycastFilterType.Exclude
+local function refreshStalkIgnore()
+    local list = {}
+    if LPChar then table.insert(list, LPChar) end
+    for i = 1, targetCount do
+        local ch = activeTargets[i].Character
+        if ch then table.insert(list, ch) end
+    end
+    -- exclude Hitboxes folder (custom hitbox ของเกม)
+    local hb = workspace:FindFirstChild("Hitboxes")
+    if hb then table.insert(list, hb) end
+    stalkRayParams.FilterDescendantsInstances = list
+end
+
+local function hasWallStalk(from, to)
+    local dir = to - from
+    if dir.Magnitude < 0.1 then return false end
+    local r = workspace:Raycast(from + v3_new(0, 2, 0), dir, stalkRayParams)
+    return r ~= nil
+end
+
+-- หา position ปลอดภัย "หลัง" Killer (ลอง back → right → left)
+local function findStalkSpot(killerRoot)
+    local kp   = killerRoot.Position
+    local look = killerRoot.CFrame.LookVector
+    local right = killerRoot.CFrame.RightVector
+    -- candidates เรียงจาก preferred → fallback
+    local candidates = {
+        { pos = kp - look * STALK_DIST,  label = "back" },
+        { pos = kp + right * STALK_DIST, label = "right" },
+        { pos = kp - right * STALK_DIST, label = "left" },
+        { pos = kp + look * STALK_DIST,  label = "front" },  -- last resort
+    }
+    for _, c in ipairs(candidates) do
+        local target = v3_new(c.pos.X, kp.Y, c.pos.Z)
+        if not hasWallStalk(kp, target) then
+            return target, c.label
+        end
+    end
+    return nil, "blocked"
+end
+
+bind(RunService.Heartbeat, function()
+    if not STALK_ON then
+        -- restore WalkSpeed ตอน OFF
+        if origWalkSpeed and LPHum then
+            pcall(function() LPHum.WalkSpeed = origWalkSpeed end)
+            origWalkSpeed = nil
+        end
+        stalkStatus = "off"
+        return
+    end
+    if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
+
+    -- บันทึก WalkSpeed เดิมครั้งแรก + set max 29
+    if not origWalkSpeed then origWalkSpeed = LPHum.WalkSpeed end
+    if LPHum.WalkSpeed ~= STALK_SPEED then
+        pcall(function() LPHum.WalkSpeed = STALK_SPEED end)
+    end
+
+    -- หา player ใกล้สุด (สมมติเป็น Killer ที่ตามมา)
+    refreshStalkIgnore()
+    local fromPos = LPRoot.Position
+    local nearestRoot, nearestD = nil, math_huge
+    for i = 1, targetCount do
+        local p = activeTargets[i]
+        local hum = pCacheHum[p]
+        if hum and hum.Health > 0 then
+            local root = pCacheRoot[p]
+            if root then
+                local d = (root.Position - fromPos).Magnitude
+                if d < nearestD then nearestD = d nearestRoot = root end
+            end
+        end
+    end
+
+    if not nearestRoot or nearestD > STALK_TRIGGER then
+        stalkStatus = string.format("idle (no enemy ≤ %d)", STALK_TRIGGER)
+        return
+    end
+
+    -- หาจุดยืนหลัง Killer (หลีกกำแพง)
+    local target, label = findStalkSpot(nearestRoot)
+    if not target then
+        stalkStatus = "all blocked"
+        return
+    end
+
+    -- เดินไปจุด target ผ่าน Humanoid:Move (animation play เอง, ไม่ teleport)
+    local dir = target - fromPos
+    dir = v3_new(dir.X, 0, dir.Z)
+    if dir.Magnitude > 0.5 then
+        LPHum:Move(dir.Unit, false)
+        stalkStatus = string.format("→ %s d=%.0f", label, nearestD)
+    else
+        -- ถึงแล้ว → หยุดเดิน
+        LPHum:Move(v3_new(0, 0, 0), false)
+        stalkStatus = string.format("✓ %s d=%.0f", label, nearestD)
+    end
+end)
+
 -- ==================== GUI ====================
 local sg = Instance.new("ScreenGui")
 sg.Name = "FRSNGUI"; sg.ResetOnSpawn = false
@@ -505,8 +620,8 @@ pcall(function() sg.Parent = game:GetService("CoreGui") end)
 if not sg.Parent then sg.Parent = LP:WaitForChild("PlayerGui", 5) end
 
 local f = Instance.new("Frame")
-f.Size = UDim2.new(0, 138, 0, 224)
-f.Position = UDim2.new(0, 8, 0.5, -112)
+f.Size = UDim2.new(0, 138, 0, 278)
+f.Position = UDim2.new(0, 8, 0.5, -139)
 f.BackgroundColor3 = Color3.fromRGB(15, 10, 20)
 f.BackgroundTransparency = 0.1
 f.Parent = sg
@@ -517,7 +632,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v1.3"; titleL.TextScaled = true
+titleL.Text = "Forsaken v1.4"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -571,20 +686,39 @@ local sp1 = mkBtn(67,  132, 30, 14, "+1",   Color3.fromRGB(30, 80, 30))
 local sp5 = mkBtn(99,  132, 36, 14, "+5",   Color3.fromRGB(30, 120, 30))
 local sTog = mkBtn(3,  148, 132, 18, "Speed OFF [F]", Color3.fromRGB(40, 40, 80))
 
+-- Stalk row (Survivor: walk to behind Killer)
+local kLbl = Instance.new("TextLabel")
+kLbl.Size = UDim2.new(0, 48, 0, 14); kLbl.Position = UDim2.new(0, 3, 0, 170)
+kLbl.BackgroundTransparency = 1; kLbl.TextColor3 = Color3.fromRGB(220, 130, 255)
+kLbl.Text = "STALK"; kLbl.TextScaled = true
+kLbl.Font = Enum.Font.GothamBold; kLbl.TextXAlignment = Enum.TextXAlignment.Left
+kLbl.Parent = f
+local kVal = Instance.new("TextLabel")
+kVal.Size = UDim2.new(0, 36, 0, 14); kVal.Position = UDim2.new(1, -39, 0, 170)
+kVal.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+kVal.TextColor3 = Color3.new(1, 1, 1); kVal.Text = tostring(STALK_DIST)
+kVal.TextScaled = true; kVal.Font = Enum.Font.GothamBold; kVal.Parent = f
+Instance.new("UICorner", kVal).CornerRadius = UDim.new(0, 3)
+local km5 = mkBtn(3,   186, 30, 14, "-5", Color3.fromRGB(100, 40, 80))
+local km1 = mkBtn(35,  186, 30, 14, "-1", Color3.fromRGB(70, 30, 60))
+local kp1 = mkBtn(67,  186, 30, 14, "+1", Color3.fromRGB(70, 30, 80))
+local kp5 = mkBtn(99,  186, 36, 14, "+5", Color3.fromRGB(100, 40, 120))
+local kTog = mkBtn(3,  202, 132, 18, "Stalk OFF [K]", Color3.fromRGB(50, 30, 60))
+
 -- Status
 local divM = Instance.new("Frame")
-divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 170)
+divM.Size = UDim2.new(1, -6, 0, 1); divM.Position = UDim2.new(0, 3, 0, 224)
 divM.BackgroundColor3 = Color3.fromRGB(80, 80, 80); divM.BorderSizePixel = 0
 divM.Parent = f
 local statL = Instance.new("TextLabel")
-statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 174)
+statL.Size = UDim2.new(1, -4, 0, 14); statL.Position = UDim2.new(0, 2, 0, 228)
 statL.BackgroundTransparency = 1; statL.TextColor3 = Color3.fromRGB(200, 200, 100)
 statL.Text = "P:0 G:0/0"; statL.TextScaled = true
 statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
-hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 190)
+hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/E/G/F/R"; hintL.TextScaled = true
+hintL.Text = "H/E/G/F/K/R"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -640,6 +774,18 @@ local function updS()
 end
 local function togS() SPEED_ON = not SPEED_ON; updS() end
 
+local function updK()
+    kVal.Text = tostring(STALK_DIST)
+    if STALK_ON then
+        kTog.BackgroundColor3 = Color3.fromRGB(150, 60, 200)
+        kTog.Text = "Stalk ON [K] d=" .. STALK_DIST
+    else
+        kTog.BackgroundColor3 = Color3.fromRGB(50, 30, 60)
+        kTog.Text = "Stalk OFF [K]"
+    end
+end
+local function togK() STALK_ON = not STALK_ON; updK() end
+
 espBtn.MouseButton1Click:Connect(toggleESP)
 watchBtn.MouseButton1Click:Connect(toggleWatch)
 agenBtn.MouseButton1Click:Connect(toggleAutoGen)
@@ -659,6 +805,13 @@ sp1.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_V
 sp5.MouseButton1Click:Connect(function() SPEED_VAL = math_min(SPEED_MAX, SPEED_VAL + 5); updS() end)
 sTog.MouseButton1Click:Connect(togS)
 
+-- Stalk buttons
+km5.MouseButton1Click:Connect(function() STALK_DIST = math_max(3,  STALK_DIST - 5); updK() end)
+km1.MouseButton1Click:Connect(function() STALK_DIST = math_max(3,  STALK_DIST - 1); updK() end)
+kp1.MouseButton1Click:Connect(function() STALK_DIST = math_min(20, STALK_DIST + 1); updK() end)
+kp5.MouseButton1Click:Connect(function() STALK_DIST = math_min(20, STALK_DIST + 5); updK() end)
+kTog.MouseButton1Click:Connect(togK)
+
 -- ==================== Hotkeys ====================
 bind(UIS.InputBegan, function(input, gp)
     if gp then return end
@@ -667,6 +820,7 @@ bind(UIS.InputBegan, function(input, gp)
     elseif kc == Enum.KeyCode.E then toggleWatch()
     elseif kc == Enum.KeyCode.G then toggleAutoGen()
     elseif kc == Enum.KeyCode.F then togS()
+    elseif kc == Enum.KeyCode.K then togK()
     elseif kc == Enum.KeyCode.R then
         rescan(); scanGenerators(); rebuildGenHL()
         rescanBtn.Text = "Done!"
@@ -688,6 +842,7 @@ task.spawn(function()
                 .. " " .. math.floor(watchTargetDist) .. "m"
         end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
+        if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
         roleL.Text = "Role: " .. (IS_KILLER and "🔪 KILLER" or "🟢 SURVIVOR")
         roleL.TextColor3 = IS_KILLER
             and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 255, 130)
@@ -703,12 +858,12 @@ task.spawn(function()
     end
 end)
 
-updS()
+updS(); updK()
 
 -- ==================== INIT ====================
 cacheLPChar(LP.Character)
 scanGenerators()
 rebuildGenHL()
 
-print("[Forsaken v1.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v1.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens)
