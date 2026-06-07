@@ -1,3 +1,6 @@
+-- 03Forsaken_saehook.txt v1.6 — เพิ่ม JSON decode + dedup
+-- v1.6: ByteNet buffer = {0a [len:u32le] [JSON...]} → decode JSON ออกมา
+--       skip duplicate buffer (เห็น log สะอาด)
 -- 03Forsaken_saehook.txt v1.5 — clone โครง 02 spy (proven working)
 -- เปลี่ยน: STATIC scan → "READY" page
 --          LIVE hook → เพิ่ม fireproximityprompt + ProximityPrompt.Triggered + WalkSpeed
@@ -38,7 +41,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -10, 1, 0); titleLbl.Position = UDim2.new(0, 10, 0, 0)
 titleLbl.BackgroundTransparency = 1
 titleLbl.TextColor3 = Color3.fromRGB(180, 220, 255)
-titleLbl.Text = "Forsaken sae HOOK v1.5 — กด ▶ Start LIVE → แล้วโหลด sae"
+titleLbl.Text = "Forsaken sae HOOK v1.6 — JSON decode + dedup"
 titleLbl.Font = Enum.Font.Code; titleLbl.TextSize = 12
 titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 titleLbl.Parent = titleBar
@@ -220,10 +223,24 @@ local function v2s(v, depth)
     elseif tp == "buffer" then
         local ok, ln = pcall(buffer.len, v)
         if ok and ln then
-            local n = math.min(ln, 16)
+            -- ByteNet pattern: byte0=marker, bytes1-4=len(u32le), bytes5+=JSON
+            -- ลอง decode JSON
+            local jsonOK, jsonStr = pcall(function()
+                if ln < 5 then return nil end
+                local marker = buffer.readu8(v, 0)
+                local jlen = buffer.readu32(v, 1)
+                if jlen <= 0 or jlen > ln - 5 then return nil end
+                local s = buffer.readstring(v, 5, jlen)
+                return string.format("mk=%d len=%d str=%s", marker, jlen, s)
+            end)
+            if jsonOK and jsonStr then
+                return "<buf:" .. ln .. "B " .. jsonStr .. ">"
+            end
+            -- fallback: hex dump
+            local n = math.min(ln, 40)
             local bs = {}
             for i = 0, n - 1 do bs[#bs+1] = string.format("%02x", buffer.readu8(v, i)) end
-            return "<buf:" .. ln .. "B " .. table.concat(bs) .. (ln > n and ".." or "") .. ">"
+            return "<buf:" .. ln .. "B hex=" .. table.concat(bs) .. (ln > n and ".." or "") .. ">"
         end
         return "<buf>"
     elseif tp == "Vector3" then
@@ -267,10 +284,21 @@ local function startLive()
                         for i, v in ipairs(args) do parts[i] = v2s(v) end
                         local path = ""
                         pcall(function() path = self:GetFullName() end)
-                        task.spawn(function()
-                            addL("[" .. ts() .. "] 🌐 " .. method .. " " .. path, C.M)
-                            addL("    args: (" .. table.concat(parts, ", ") .. ")", C.B)
-                        end)
+                        -- dedup: ถ้า args ตรงกับครั้งก่อน → นับเฉยๆ ไม่ log ซ้ำ
+                        local sig = method .. "|" .. path .. "|" .. table.concat(parts, ", ")
+                        _G.FRSN_LAST_SIG = _G.FRSN_LAST_SIG or {}
+                        local seen = _G.FRSN_LAST_SIG
+                        seen[sig] = (seen[sig] or 0) + 1
+                        if seen[sig] <= 3 then
+                            task.spawn(function()
+                                addL("[" .. ts() .. "] 🌐 " .. method .. " " .. path, C.M)
+                                addL("    args: (" .. table.concat(parts, ", ") .. ")", C.B)
+                            end)
+                        elseif seen[sig] % 50 == 0 then
+                            task.spawn(function()
+                                addL("[" .. ts() .. "] 🔁 ซ้ำ #" .. seen[sig] .. " " .. sig:sub(1, 80), C.S)
+                            end)
+                        end
                     elseif method == "fireproximityprompt" or method == "InputHoldBegin" then
                         C_prompt += 1
                         local path = ""
@@ -417,4 +445,4 @@ task.spawn(function()
     end
 end)
 
-print("[sae-hook v1.5] GUI loaded — กด ▶ Start LIVE")
+print("[sae-hook v1.6] GUI loaded — กด ▶ Start LIVE")
