@@ -1,4 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v2.3 (Survivor + Killer auto-detect)
+-- 01Forsaken.txt — Forsaken Helper v2.4 (Survivor + Killer + Spectator)
+-- v2.4: FIX role detect 100% → ใช้ workspace.Players.<Survivors/Killers/Spectating>
+--       (spy confirmed: Forsaken เก็บ Char Model ตาม folder ของ role)
+--       + role "spectator" (สีเทา) → IS_KILLER=false, ESP เห็นเทา
 -- v2.3: + Role Debug — print Teams + Attributes ทุกคนใน console (F9)
 --       กด Z = print ซ้ำ (หลังเข้า match จริง)
 -- v2.2: ย้าย Watch hotkey E → T (E ทับสกิลเกม)
@@ -123,7 +126,8 @@ local lockedHead, lockedRoot, lockedHum, lockedPlayer = nil, nil, nil, nil
 local LPHead, LPRoot, LPChar, LPHum = nil, nil, nil, nil
 local bv = nil
 local viewportX, viewportY = 0, 0
-local IS_KILLER = false   -- updated ทุก frame ใน roleTick
+local MY_ROLE   = "spectator"   -- "killer" | "survivor" | "spectator"
+local IS_KILLER = false   -- shortcut: MY_ROLE == "killer"
 
 local pCacheHead = {}
 local pCacheRoot = {}
@@ -143,43 +147,41 @@ refreshViewport()
 bind(Camera:GetPropertyChangedSignal("ViewportSize"), refreshViewport)
 
 -- ==================== Role detect (Forsaken pattern) ====================
--- v2: ลอง Team → Attribute → ชื่อ killer pattern → fallback
--- รายชื่อ Killer ที่รู้: Slasher, 007n7, John Doe, Jason, 1x1x1x1, Dr.GameTheory,
---                       C00lkidd, Two Time(?), etc.
-local KILLER_NAMES = {
-    ["Slasher"]=1, ["007n7"]=1, ["John Doe"]=1, ["Jason"]=1, ["1x1x1x1"]=1,
-    ["Dr.GameTheory"]=1, ["C00lkidd"]=1, ["JohnDoe"]=1, ["DrGameTheory"]=1,
-    ["Niko"]=1, ["Chance"]=1,
-}
-local SURVIVOR_NAMES = {
-    ["Noob"]=1, ["Builderman"]=1, ["Two Time"]=1, ["TwoTime"]=1, ["Shedletsky"]=1,
-    ["Taph"]=1, ["Guest 1337"]=1, ["Guest1337"]=1, ["Elliot"]=1,
-}
+-- v2.4: ใช้ workspace.Players.<folder> เป็น signal หลัก (spy confirmed)
+--   workspace.Players/
+--   ├── Survivors/  (Model ชื่อ = char.Name ของ survivor)
+--   ├── Killers/    (Model ชื่อ = char.Name ของ killer)
+--   └── Spectating/ (Model ชื่อ = player.Name ของคนนั่งดู)
 local function detectRole(player, char)
-    -- 1) Team (เชื่อถือได้สุด)
-    local tm = player.Team
-    if tm then
-        local tn = tm.Name:lower()
-        if tn:find("kill") or tn:find("slash") or tn:find("enemy") then return "killer" end
-        if tn:find("surv") or tn:find("victim") or tn:find("player") then return "survivor" end
+    if not char then return "survivor" end
+    local wsP = workspace:FindFirstChild("Players")
+    if wsP then
+        -- 1) เช็คโดยตรง: char เป็น descendant ของ folder?
+        local killers = wsP:FindFirstChild("Killers")
+        if killers and char:IsDescendantOf(killers) then return "killer" end
+        local survivors = wsP:FindFirstChild("Survivors")
+        if survivors and char:IsDescendantOf(survivors) then return "survivor" end
+        local spec = wsP:FindFirstChild("Spectating")
+        if spec and char:IsDescendantOf(spec) then return "spectator" end
+        -- 2) Fallback: ชื่อ char ตรงกับ Model name ใน folder?
+        if killers then
+            for _, m in pairs(killers:GetChildren()) do
+                if m.Name == char.Name then return "killer" end
+            end
+        end
+        if survivors then
+            for _, m in pairs(survivors:GetChildren()) do
+                if m.Name == char.Name then return "survivor" end
+            end
+        end
+        if spec then
+            for _, m in pairs(spec:GetChildren()) do
+                if m.Name == char.Name then return "spectator" end
+            end
+        end
     end
-    -- 2) Attribute
-    local a = player:GetAttribute("Role") or player:GetAttribute("Team")
-        or player:GetAttribute("Class")
-    if type(a) == "string" then
-        local al = a:lower()
-        if al:find("kill") or al:find("slash") then return "killer" end
-        if al:find("surv") then return "survivor" end
-    end
-    -- 3) Char name ตาม list (รู้ก็เชื่อทันที)
-    if char then
-        if KILLER_NAMES[char.Name]   then return "killer"   end
-        if SURVIVOR_NAMES[char.Name] then return "survivor" end
-    end
-    -- 4) fallback: char.Name == player.Name → survivor (default Roblox char)
-    if char and char.Name == player.Name then return "survivor" end
-    -- 5) ถ้ายังเดาไม่ออก → survivor (เพราะ Killer มีตัวเดียว — กรณีหาไม่เจอมักผิดทาง Killer)
-    return "survivor"
+    -- 3) ถ้าไม่มี workspace.Players → ยังอยู่ลอบบี้ → spectator
+    return "spectator"
 end
 
 -- ==================== LP Char + BodyVelocity ====================
@@ -202,7 +204,8 @@ local function cacheLPChar(char)
     LPHead = char:FindFirstChild("Head")
     LPHum  = char:FindFirstChildOfClass("Humanoid")
     setupBV(char)
-    IS_KILLER = detectRole(LP, char) == "killer"
+    MY_ROLE   = detectRole(LP, char)
+    IS_KILLER = MY_ROLE == "killer"
 end
 
 bind(LP.CharacterAdded, function(c)
@@ -214,13 +217,16 @@ bind(LP.CharacterRemoving, function() cacheLPChar(nil) end)
 -- ==================== Highlight (ESP) ====================
 local COL_KILLER   = Color3.fromRGB(255,  50,  50)   -- แดง
 local COL_SURVIVOR = Color3.fromRGB( 50, 255,  80)   -- เขียว
+local COL_SPEC     = Color3.fromRGB(150, 150, 150)   -- เทา — spectator
 local COL_GEN_TODO = Color3.fromRGB(  0, 200, 255)   -- ฟ้า — gen ยังไม่เสร็จ
 local COL_GEN_DONE = Color3.fromRGB(120, 120, 120)   -- เทา — gen เสร็จแล้ว
 local COL_ITEM     = Color3.fromRGB(255, 230,  60)   -- เหลือง — ไอเท็ม
 local COL_WHITE    = Color3.fromRGB(255, 255, 255)
 
 local function colorFor(role)
-    return role == "killer" and COL_KILLER or COL_SURVIVOR
+    if role == "killer"    then return COL_KILLER   end
+    if role == "spectator" then return COL_SPEC     end
+    return COL_SURVIVOR
 end
 
 local function addHL(p)
@@ -389,7 +395,10 @@ task.spawn(function()
             end
         end
         -- ตรวจ role ของเราเอง
-        if LPChar then IS_KILLER = detectRole(LP, LPChar) == "killer" end
+        if LPChar then
+            MY_ROLE = detectRole(LP, LPChar)
+            IS_KILLER = MY_ROLE == "killer"
+        end
     end
 end)
 
@@ -820,7 +829,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.3"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.4"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1044,9 +1053,16 @@ task.spawn(function()
         end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
-        roleL.Text = "Role: " .. (IS_KILLER and "🔪 KILLER" or "🟢 SURVIVOR")
-        roleL.TextColor3 = IS_KILLER
-            and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(100, 255, 130)
+        if MY_ROLE == "killer" then
+            roleL.Text = "Role: 🔪 KILLER"
+            roleL.TextColor3 = Color3.fromRGB(255, 100, 100)
+        elseif MY_ROLE == "survivor" then
+            roleL.Text = "Role: 🟢 SURVIVOR"
+            roleL.TextColor3 = Color3.fromRGB(100, 255, 130)
+        else
+            roleL.Text = "Role: 👁️ SPECTATOR"
+            roleL.TextColor3 = Color3.fromRGB(180, 180, 180)
+        end
         updK()   -- refresh stalk distance display (เปลี่ยนตาม role)
         -- update gen highlight colors (เสร็จ → เทา)
         if ESPOn and #GenHL > 0 then
@@ -1088,7 +1104,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v2.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
