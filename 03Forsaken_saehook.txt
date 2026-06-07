@@ -1,4 +1,5 @@
--- 03Forsaken_saehook.txt — Forsaken sae script reverse-hook v1.0
+-- 03Forsaken_saehook.txt — Forsaken sae script reverse-hook v1.1
+-- v1.1: FIX freeze — เลิกสร้าง TextLabel 400 ตัวใหม่ทุก 1.5 วิ → ใช้ TextLabel เดียวยาวๆ
 -- รันตัวนี้ "ก่อน" sae script → hook ทุก action → ดูว่า sae ปั่น Gen ยังไง
 --
 -- วิธีใช้:
@@ -28,7 +29,7 @@ end
 
 -- ────────── 2) Log buffer ──────────
 local LOGS = { remote = {}, prompt = {}, render = {}, walk = {}, all = {} }
-local MAX_PER_CAT = 400
+local MAX_PER_CAT = 150   -- v1.1: ลด — UI ไม่ไหว 400
 local startClock = os.clock()
 local function ts() return string.format("%.3f", os.clock() - startClock) end
 
@@ -270,16 +271,27 @@ stats.Text = "remote=0  prompt=0  render=0  walk=0"
 stats.TextScaled = true; stats.Font = Enum.Font.Gotham
 stats.TextXAlignment = Enum.TextXAlignment.Left; stats.Parent = frame
 
--- Output scroll
+-- v1.1: ScrollingFrame + 1 TextLabel ใหญ่ตัวเดียว (เปลี่ยน .Text เท่านั้น)
 local scroll = Instance.new("ScrollingFrame")
 scroll.Size = UDim2.new(1, -8, 1, -90); scroll.Position = UDim2.new(0, 4, 0, 86)
 scroll.BackgroundColor3 = Color3.fromRGB(5, 8, 14)
-scroll.BorderSizePixel = 0; scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scroll.BorderSizePixel = 0; scroll.CanvasSize = UDim2.new(0, 0, 0, 2400)
 scroll.ScrollBarThickness = 8; scroll.Parent = frame
 Instance.new("UICorner", scroll).CornerRadius = UDim.new(0, 4)
-local layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 1); layout.Parent = scroll
-local pad = Instance.new("UIPadding"); pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 6); pad.Parent = scroll
+
+local outBox = Instance.new("TextBox")
+outBox.Size = UDim2.new(1, -12, 0, 2400)
+outBox.Position = UDim2.new(0, 6, 0, 4)
+outBox.BackgroundTransparency = 1
+outBox.TextColor3 = Color3.fromRGB(220, 230, 240)
+outBox.TextSize = 12; outBox.Font = Enum.Font.Code
+outBox.TextXAlignment = Enum.TextXAlignment.Left
+outBox.TextYAlignment = Enum.TextYAlignment.Top
+outBox.TextWrapped = true
+outBox.MultiLine = true
+outBox.ClearTextOnFocus = false
+outBox.Text = "(ยังไม่มี log — รัน sae script แล้วกด Auto-Gen)"
+outBox.Parent = scroll
 
 local function refreshTabBtns()
     for n, b in pairs(tabBtns) do
@@ -289,20 +301,8 @@ local function refreshTabBtns()
 end
 refreshTabBtns()
 
-local function renderTab()
-    scroll:ClearAllChildren()
-    layout = Instance.new("UIListLayout"); layout.Padding = UDim.new(0, 1); layout.Parent = scroll
-    pad = Instance.new("UIPadding"); pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 6); pad.Parent = scroll
+local function buildText()
     if activeTab == "COPY" then
-        -- show big TextBox with everything for copy
-        local box = Instance.new("TextBox")
-        box.Size = UDim2.new(1, -8, 1, -8); box.Position = UDim2.new(0, 4, 0, 4)
-        box.MultiLine = true; box.TextWrapped = true; box.ClearTextOnFocus = false
-        box.BackgroundColor3 = Color3.fromRGB(5, 8, 14)
-        box.TextColor3 = Color3.fromRGB(220, 230, 240)
-        box.TextSize = 11; box.Font = Enum.Font.Code
-        box.TextXAlignment = Enum.TextXAlignment.Left
-        box.TextYAlignment = Enum.TextYAlignment.Top
         local s = {}
         s[#s+1] = "=== FORSAKEN sae HOOK DUMP ==="
         s[#s+1] = string.format("remote=%d  prompt=%d  render=%d  walk=%d",
@@ -319,38 +319,45 @@ local function renderTab()
         s[#s+1] = ""
         s[#s+1] = "=== WALK ==="
         for _, l in ipairs(LOGS.walk) do s[#s+1] = l end
-        box.Text = table.concat(s, "\n")
-        box.Parent = scroll
-        pcall(function() if setclipboard then setclipboard(box.Text) end end)
-        return
+        local txt = table.concat(s, "\n")
+        pcall(function() if setclipboard then setclipboard(txt) end end)
+        return txt
     end
     local source = LOGS[activeTab:lower()] or LOGS.all
-    for _, line in ipairs(source) do
-        local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, -12, 0, 14)
-        lbl.BackgroundTransparency = 1
-        lbl.TextColor3 = Color3.fromRGB(220, 230, 240)
-        lbl.Text = line; lbl.TextScaled = false; lbl.TextSize = 11
-        lbl.Font = Enum.Font.Code
-        lbl.TextXAlignment = Enum.TextXAlignment.Left
-        lbl.TextWrapped = true
-        lbl.Parent = scroll
+    -- แสดงแค่ 100 บรรทัดล่าสุด (UI smooth)
+    local startIdx = math.max(1, #source - 99)
+    local lines = {}
+    for i = startIdx, #source do lines[#lines+1] = source[i] end
+    if #lines == 0 then return "(ว่าง — ยังไม่มี log สำหรับ tab นี้)" end
+    return table.concat(lines, "\n")
+end
+
+local lastUpdate = 0
+local lastTab = ""
+local lastCounts = ""
+local function updateUI()
+    local counts = string.format("%d_%d_%d_%d",
+        #LOGS.remote, #LOGS.prompt, #LOGS.render, #LOGS.walk)
+    -- update เฉพาะถ้า tab เปลี่ยน หรือ count เปลี่ยน
+    if activeTab ~= lastTab or counts ~= lastCounts then
+        outBox.Text = buildText()
+        lastTab = activeTab; lastCounts = counts
     end
 end
 
 for name, b in pairs(tabBtns) do
     b.MouseButton1Click:Connect(function()
-        activeTab = name; refreshTabBtns(); renderTab()
+        activeTab = name; refreshTabBtns(); updateUI()
     end)
 end
 
--- Refresh stats + render
+-- update ทุก 2 วิ (เบาๆ)
 task.spawn(function()
     while gui.Parent do
         stats.Text = string.format("remote=%d  prompt=%d  render=%d  walk=%d  | t=%ss",
             #LOGS.remote, #LOGS.prompt, #LOGS.render, #LOGS.walk, ts())
-        if activeTab ~= "COPY" then renderTab() end
-        task.wait(1.5)
+        updateUI()
+        task.wait(2)
     end
 end)
 
@@ -364,6 +371,6 @@ gui.AncestryChanged:Connect(function()
     end
 end)
 
-print("[FRSN sae-hook v1.0] hooked! โหลด sae ได้เลย → ดู GUI")
+print("[FRSN sae-hook v1.1] hooked! โหลด sae ได้เลย → ดู GUI")
 push("all", "=== HOOK READY — load sae script now ===")
-renderTab()
+updateUI()
