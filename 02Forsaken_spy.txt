@@ -1,4 +1,6 @@
--- 02Forsaken_spy.txt — Forsaken Discovery Spy v1.1
+-- 02Forsaken_spy.txt — Forsaken Discovery Spy v1.2
+-- v1.2: + C2 workspace.Players folder | C3 KillerIntroUI | C4 LP backpack/attributes
+--       → ใช้หา role signal ที่จริง (Forsaken ไม่ใช้ Player.Team)
 -- v1.1: Killer ไม่มี Tool → เพิ่ม hook MouseButton1 (วัดระยะตอนคลิกเมาส์) + แสดง remote args ละเอียดขึ้น
 -- รัน ครั้งแรก ในเกม → ได้ข้อมูล:
 --   1) workspace top-level + map structure
@@ -268,6 +270,99 @@ task.spawn(function()
         for _, t in pairs(Teams:GetChildren()) do
             local cnt = #t:GetPlayers()
             addS("• " .. t.Name .. " (" .. cnt .. " players)", C.G)
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ C2. WORKSPACE.PLAYERS folder + ROLE SIGNALS ═══
+    addS("=== C2. WORKSPACE.PLAYERS (role signals) ===", C.Y)
+    pcall(function()
+        local wsP = workspace:FindFirstChild("Players")
+        if wsP then
+            for _, ch in pairs(wsP:GetChildren()) do
+                local cls = ch.ClassName
+                local me = (ch.Name == LP.Name) and " ⭐ ME" or ""
+                addS("• " .. ch.Name .. " [" .. cls .. "]" .. me, C.G)
+                -- Attributes
+                for k, v in pairs(ch:GetAttributes()) do
+                    addS("    @" .. k .. " = " .. tostring(v), C.S)
+                end
+                -- Direct children (Values/Folders)
+                for _, sub in pairs(ch:GetChildren()) do
+                    local val = ""
+                    pcall(function()
+                        if sub:IsA("ValueBase") then val = " = " .. tostring(sub.Value) end
+                    end)
+                    addS("    + [" .. sub.ClassName .. "] " .. sub.Name .. val, C.B)
+                end
+            end
+        else
+            addS("  (ไม่มี workspace.Players folder)", C.S)
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ C3. PLAYERGUI KILLER SIGNALS ═══
+    addS("=== C3. KILLER UI SIGNALS (LP.PlayerGui) ===", C.Y)
+    pcall(function()
+        local checks = { "KillerIntroUI", "KillerUI", "KillerHUD", "AbilityContainer" }
+        for _, n in pairs(checks) do
+            local u = pg:FindFirstChild(n, true)
+            if u then
+                local en = "?"; pcall(function() en = tostring(u.Enabled) end)
+                addS("• " .. n .. " — Enabled=" .. en .. " | path=" .. shortPath(u, 4), C.G)
+            else
+                addS("• " .. n .. " — NOT FOUND", C.S)
+            end
+        end
+        -- ดู MainUI > AbilityContainer (Killer ability slot)
+        local mui = pg:FindFirstChild("MainUI")
+        if mui then
+            local ab = mui:FindFirstChild("AbilityContainer", true)
+            if ab then
+                addS("• MainUI.AbilityContainer children:", C.G)
+                for _, c in pairs(ab:GetChildren()) do
+                    addS("    + [" .. c.ClassName .. "] " .. c.Name, C.B)
+                end
+            end
+        end
+    end)
+    addS("", C.S)
+
+    -- ═══ C4. LP CHARACTER + BACKPACK (role signal: Killer มี weapon tool?) ═══
+    addS("=== C4. LP CHARACTER + BACKPACK ===", C.Y)
+    pcall(function()
+        local ch = LP.Character
+        if ch then
+            addS("Char.Name = " .. ch.Name, C.G)
+            for _, c in pairs(ch:GetChildren()) do
+                if c:IsA("Tool") or c.ClassName == "Folder" or c:IsA("ValueBase") then
+                    local val = ""
+                    if c:IsA("ValueBase") then val = " = " .. tostring(c.Value) end
+                    addS("  + [" .. c.ClassName .. "] " .. c.Name .. val, C.B)
+                end
+            end
+            for k, v in pairs(ch:GetAttributes()) do
+                addS("  @Char." .. k .. " = " .. tostring(v), C.S)
+            end
+            local hum = ch:FindFirstChildOfClass("Humanoid")
+            if hum then
+                for k, v in pairs(hum:GetAttributes()) do
+                    addS("  @Hum." .. k .. " = " .. tostring(v), C.S)
+                end
+            end
+        end
+        local bp = LP:FindFirstChild("Backpack")
+        if bp then
+            local toolCount = 0
+            for _, c in pairs(bp:GetChildren()) do
+                addS("  Backpack: [" .. c.ClassName .. "] " .. c.Name, C.B)
+                toolCount += 1
+            end
+            if toolCount == 0 then addS("  Backpack: (empty)", C.S) end
+        end
+        for k, v in pairs(LP:GetAttributes()) do
+            addS("  @LP." .. k .. " = " .. tostring(v), C.S)
         end
     end)
     addS("", C.S)
