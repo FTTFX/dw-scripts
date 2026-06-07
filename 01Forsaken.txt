@@ -1,4 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v2.4 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v2.5 (Survivor + Killer + Spectator)
+-- v2.5: AutoGen ใหม่ — fire prompt + RE:FireServer ×6 cadence 2.5s (ดัน progress จริง)
+--       Gen เสร็จ → DESTROY highlight ทิ้งเลย (ไม่เหลือเทา)
+--       isGenCompleted ใช้ Progress.Value ≥ 100 เป็น check หลัก
 -- v2.4: FIX role detect 100% → ใช้ workspace.Players.<Survivors/Killers/Spectating>
 --       (spy confirmed: Forsaken เก็บ Char Model ตาม folder ของ role)
 --       + role "spectator" (สีเทา) → IS_KILLER=false, ESP เห็นเทา
@@ -407,13 +410,17 @@ local cachedGens = {}    -- list ของ { model, prompt, part, completed? }
 local lastGenScan = 0
 
 local function isGenCompleted(genModel)
-    -- ลอง BoolValue Completed
+    -- 1) Progress.Value >= 100 (Forsaken ใช้แบบนี้ — IntValue 0-100)
+    local prog = genModel:FindFirstChild("Progress")
+    if prog and prog:IsA("IntValue") then return prog.Value >= 100 end
+    if prog and prog:IsA("NumberValue") then return prog.Value >= 100 end
+    -- 2) BoolValue Completed
     local c = genModel:FindFirstChild("Completed", true)
     if c and c:IsA("BoolValue") then return c.Value end
-    -- ลอง Attribute
+    -- 3) Attribute
     local a = genModel:GetAttribute("Completed")
     if type(a) == "boolean" then return a end
-    -- fallback: ดู Prompt.Enabled (เสร็จ → disabled)
+    -- 4) fallback: Prompt.Enabled
     local p = genModel:FindFirstChildWhichIsA("ProximityPrompt", true)
     if p then return not p.Enabled end
     return false
@@ -664,13 +671,45 @@ end)
 -- → script ทำแค่ fire prompt อัตโนมัติเมื่อผู้เล่นเดินมาใกล้ ≤ AUTOGEN_DIST
 -- → ใช้ ESP gen (cyan highlight) ช่วยมอง → เดินไปเอง → script กด E ค้างให้
 local AUTOGEN_DIST = 8   -- ระยะ ≤ นี้ studs ค่อย fire prompt (auto-press E)
+local AUTOGEN_FIRE_COUNT = 6     -- จำนวน RE:FireServer ต่อ session
+local AUTOGEN_FIRE_GAP   = 2.5   -- gap ระหว่าง fire (ห้าม < 2.5 → kick)
 local autogenStatus = "idle"
+local autogenBusy = {}           -- [genModel] = true (กำลังยิง progress อยู่)
+
+local function pushGenProgress(g)
+    if autogenBusy[g.model] then return end
+    autogenBusy[g.model] = true
+    task.spawn(function()
+        -- patch stamina ครั้งเดียว
+        pcall(function()
+            require(game.ReplicatedStorage.Systems.Character.Game.Sprinting)
+                .StaminaLossDisabled = true
+        end)
+        -- กด E ก่อน (เปิด puzzle session)
+        pcall(function() fireproximityprompt(g.prompt) end)
+        task.wait(0.4)
+        -- ยิง progress 6 ครั้ง
+        local RE = g.model:FindFirstChild("Remotes")
+        RE = RE and RE:FindFirstChild("RE")
+        if RE then
+            for i = 1, AUTOGEN_FIRE_COUNT do
+                if not AUTOGEN_ON then break end
+                if not g.model or not g.model.Parent then break end
+                if isGenCompleted(g.model) then break end
+                pcall(function() RE:FireServer() end)
+                task.wait(AUTOGEN_FIRE_GAP)
+            end
+        end
+        autogenBusy[g.model] = nil
+    end)
+end
+
 bind(RunService.Heartbeat, function()
     if not AUTOGEN_ON then autogenStatus = "off" return end
     if IS_KILLER then autogenStatus = "killer (skip)" return end
     if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
     GEN_TICK += 1
-    if GEN_TICK % 3 ~= 0 then return end   -- ~20/วิ (fire prompt บ่อยพอสำหรับ hold)
+    if GEN_TICK % 6 ~= 0 then return end   -- ~10/วิ (พอสำหรับเช็คระยะ)
 
     -- rescan gen ทุก 5 วิ (เผื่อเข้า match ใหม่)
     if clock() - lastGenScan > 5 then
@@ -693,9 +732,13 @@ bind(RunService.Heartbeat, function()
     if not best then autogenStatus = "no gen" return end
 
     if bestD <= AUTOGEN_DIST then
-        -- ใกล้พอ → fire prompt (กดค้าง E แทนเรา)
-        pcall(function() fireproximityprompt(best.prompt) end)
-        autogenStatus = string.format("✓ ปั่น (%.1fm)", bestD)
+        -- ใกล้พอ → ยิง progress (E + RE×6 cadence 2.5s)
+        if autogenBusy[best.model] then
+            autogenStatus = string.format("⚡ ยิง progress (%.1fm)", bestD)
+        else
+            pushGenProgress(best)
+            autogenStatus = string.format("✓ เริ่มยิง (%.1fm)", bestD)
+        end
     else
         -- ยังไกล → แสดงระยะ + ทิศ (ESP cyan ช่วยมอง)
         autogenStatus = string.format("เดินไป Gen %.0fm", bestD)
@@ -829,7 +872,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.4"; titleL.TextScaled = true
+titleL.Text = "Forsaken v2.5"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1064,12 +1107,17 @@ task.spawn(function()
             roleL.TextColor3 = Color3.fromRGB(180, 180, 180)
         end
         updK()   -- refresh stalk distance display (เปลี่ยนตาม role)
-        -- update gen highlight colors (เสร็จ → เทา)
-        if ESPOn and #GenHL > 0 then
+        -- update gen highlights (เสร็จ → DESTROY ทิ้ง)
+        if #GenHL > 0 then
             for i, g in pairs(cachedGens) do
                 local hl = GenHL[i]
                 if hl and hl.Parent then
-                    hl.FillColor = isGenCompleted(g.model) and COL_GEN_DONE or COL_GEN_TODO
+                    if isGenCompleted(g.model) then
+                        pcall(function() hl:Destroy() end)
+                        GenHL[i] = nil
+                    elseif ESPOn then
+                        hl.FillColor = COL_GEN_TODO
+                    end
                 end
             end
         end
@@ -1104,7 +1152,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v2.5] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
