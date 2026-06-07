@@ -1,0 +1,121 @@
+-- 04Forsaken_oneshot.txt — one-shot capture buffer แรกของ sae
+-- รัน → โหลด sae → เปิด Auto-Gen → POPUP ใหญ่จะโผล่ + copy clipboard อัตโนมัติ
+-- จะจับแค่ buffer แรก แล้วเลิก hook เลย (ไม่ lag)
+
+local LP = game:GetService("Players").LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+
+-- guard
+local o = pg:FindFirstChild("FRSN1ShotGUI"); if o then o:Destroy() end
+
+-- ────── small status GUI ──────
+local sg = Instance.new("ScreenGui"); sg.Name = "FRSN1ShotGUI"
+sg.ResetOnSpawn = false; sg.Parent = pg
+
+local f = Instance.new("Frame")
+f.Size = UDim2.new(0, 360, 0, 60)
+f.Position = UDim2.new(0.5, -180, 0, 8)
+f.BackgroundColor3 = Color3.fromRGB(20, 30, 50)
+f.BorderSizePixel = 0; f.Active = true; f.Draggable = true
+f.Parent = sg
+Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+
+local lbl = Instance.new("TextLabel")
+lbl.Size = UDim2.new(1, -10, 1, -10); lbl.Position = UDim2.new(0, 5, 0, 5)
+lbl.BackgroundTransparency = 1
+lbl.TextColor3 = Color3.fromRGB(255, 220, 100)
+lbl.Font = Enum.Font.Code; lbl.TextSize = 13
+lbl.Text = "🎯 รอจับ buffer แรกของ sae...\n(โหลด sae → Auto-Gen ON → ยืนใกล้ Gen)"
+lbl.TextWrapped = true
+lbl.TextXAlignment = Enum.TextXAlignment.Left
+lbl.TextYAlignment = Enum.TextYAlignment.Top
+lbl.Parent = f
+
+-- ────── hook ──────
+local captured = false
+local mt = getrawmetatable(game)
+if setreadonly then pcall(setreadonly, mt, false) end
+local origNC
+origNC = hookmetamethod(game, "__namecall", function(self, ...)
+    if not captured then
+        pcall(function()
+            local method = getnamecallmethod()
+            if method == "FireServer" or method == "InvokeServer" then
+                local args = {...}
+                -- หา buffer ใน args (level 1 + nested table)
+                local buf = nil
+                for _, v in ipairs(args) do
+                    if typeof(v) == "buffer" then buf = v break end
+                    if type(v) == "table" then
+                        for _, vv in pairs(v) do
+                            if typeof(vv) == "buffer" then buf = vv break end
+                        end
+                    end
+                    if buf then break end
+                end
+                if buf then
+                    captured = true
+                    local ln = buffer.len(buf)
+                    local marker = buffer.readu8(buf, 0)
+                    local jlen = buffer.readu32(buf, 1)
+
+                    local payload = "?"
+                    if jlen > 0 and jlen <= ln - 5 then
+                        payload = buffer.readstring(buf, 5, jlen)
+                    end
+
+                    -- full hex
+                    local hex = {}
+                    for i = 0, ln - 1 do hex[#hex+1] = string.format("%02x", buffer.readu8(buf, i)) end
+                    local hexStr = table.concat(hex, " ")
+
+                    -- args sig (channel + count)
+                    local sig = ""
+                    for i, v in ipairs(args) do
+                        sig = sig .. " arg" .. i .. "=" .. typeof(v) .. "(" .. tostring(v) .. ")"
+                    end
+
+                    local report = string.format([[
+=== sae CAPTURE @ %s ===
+Remote: %s
+Method: %s
+ByteLen: %d   Marker: 0x%02x   JSONLen: %d
+Args sig: %s
+
+JSON payload (%d chars):
+%s
+
+Full hex (%d bytes):
+%s
+]], os.date("%H:%M:%S"),
+    self:GetFullName(), method, ln, marker, jlen, sig, #payload, payload, ln, hexStr)
+
+                    print(report)
+                    pcall(function() if setclipboard then setclipboard(report) end end)
+
+                    -- show popup
+                    task.spawn(function()
+                        f.Size = UDim2.new(0, 500, 0, 280)
+                        f.Position = UDim2.new(0.5, -250, 0.5, -140)
+                        lbl.TextColor3 = Color3.fromRGB(150, 255, 180)
+                        lbl.Text = "✅ CAPTURED — clipboard มี report แล้ว!\nPaste ส่งผมได้เลย\n\n"
+                            .. "Marker=0x" .. string.format("%02x", marker)
+                            .. " JSONLen=" .. jlen .. " (" .. ln .. " bytes)\n\n"
+                            .. payload
+                    end)
+                end
+            end
+        end)
+    end
+    return origNC(self, ...)
+end)
+if setreadonly then pcall(setreadonly, mt, true) end
+
+-- close on click
+f.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton2 then sg:Destroy() end
+end)
+-- auto-close 2 min
+task.delay(120, function() if sg.Parent then sg:Destroy() end end)
+
+print("[oneshot] hook ready → โหลด sae")
