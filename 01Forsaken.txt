@@ -1,4 +1,4 @@
--- 01Forsaken.txt — Forsaken Helper v3.1 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v3.2 (Survivor + Killer + Spectator)
 -- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
 -- v2.9: + Noclip [N] — ผ่านกำแพง ยังเดินติดพื้น (Humanoid floor raycast ทำงานแยก)
 -- v2.8: revert Stalk กลับ v2.5 (WalkSpeed=29 + Humanoid:Move) — CFrame warp โดนแบน
@@ -861,22 +861,39 @@ climbRayP.FilterType = Enum.RaycastFilterType.Exclude
 bind(RunService.Heartbeat, function()
     if not CLIMB_ON or not bv or not bv.Parent then return end
     if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
-    local moveDir = LPHum.MoveDirection
-    if moveDir.Magnitude < 0.1 then return end
-    local horizDir = v3_new(moveDir.X, 0, moveDir.Z)
-    if horizDir.Magnitude < 0.01 then return end
+
+    -- รวม candidate directions: MoveDir + HRP.Look + Camera.Look (horizontal)
+    local rawDirs = {
+        LPHum.MoveDirection,
+        LPRoot.CFrame.LookVector,
+        Camera.CFrame.LookVector,
+    }
+    local dirs = {}
+    for _, d in ipairs(rawDirs) do
+        local h = v3_new(d.X, 0, d.Z)
+        if h.Magnitude > 0.05 then dirs[#dirs+1] = h.Unit end
+    end
+    if #dirs == 0 then return end
+
     climbRayP.FilterDescendantsInstances = LPChar and {LPChar} or {}
-    local hit = workspace:Raycast(LPRoot.Position, horizDir.Unit * 2.5, climbRayP)
-    if hit then
-        -- normal แนวนอนของกำแพง
-        local n = v3_new(hit.Normal.X, 0, hit.Normal.Z)
-        if n.Magnitude < 0.01 then return end
-        n = n.Unit
-        -- ตัด component ที่ทะลุกำแพงออก → เหลือแค่ lateral
-        local proj = moveDir - n * moveDir:Dot(n)
-        bv.MaxForce = v3_new(1e5, 1e5, 1e5)
-        bv.Velocity = v3_new(proj.X, 0, proj.Z) * math_min(SPEED_VAL, SPEED_MAX)
-                    + v3_new(0, CLIMB_SPEED, 0)
+    -- cast 2 ความสูง: เอว (HRP) + เท้า (HRP-2Y)
+    local origins = { LPRoot.Position, LPRoot.Position - v3_new(0, 2, 0) }
+
+    for _, dir in ipairs(dirs) do
+        for _, origin in ipairs(origins) do
+            local hit = workspace:Raycast(origin, dir * 3.5, climbRayP)
+            if hit then
+                local n = v3_new(hit.Normal.X, 0, hit.Normal.Z)
+                if n.Magnitude > 0.01 then
+                    n = n.Unit
+                    local proj = dir - n * dir:Dot(n)
+                    bv.MaxForce = v3_new(1e5, 1e5, 1e5)
+                    bv.Velocity = proj * math_min(SPEED_VAL, SPEED_MAX)
+                                + v3_new(0, CLIMB_SPEED, 0)
+                    return
+                end
+            end
+        end
     end
 end)
 
@@ -899,7 +916,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.1"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.2"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1182,7 +1199,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
