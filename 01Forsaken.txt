@@ -1,4 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v3.3 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v3.4 (Survivor + Killer + Spectator)
+-- v3.4: FIX Wallclimb [C] — รวม Speed+Climb เป็น loop เดียว (เลิกแย่ง bv)
+--       ตรวจกำแพง 2 ทาง: raycast + "ดันไม่ขยับ" (ใช้ได้แม้ CanQuery=false)
+--       ดันแค่ Y → cresting ขึ้นขอบได้ ไม่ลอยค้าง
 -- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
 -- v2.9: + Noclip [N] — ผ่านกำแพง ยังเดินติดพื้น (Humanoid floor raycast ทำงานแยก)
 -- v2.8: revert Stalk กลับ v2.5 (WalkSpeed=29 + Humanoid:Move) — CFrame warp โดนแบน
@@ -652,15 +655,54 @@ table.insert(CONNS, { Disconnect = function()
     pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
 end })
 
--- ==================== Speed loop ====================
+-- ==================== Movement controller (Climb > Speed) ====================
+-- รวม 2 loop เป็น 1 เพื่อกันแย่ง bv กัน
+-- CLIMB ตรวจกำแพง 2 ทาง: (1) raycast หน้า  (2) ดันแล้ว horizontal speed ต่ำ = ติดกำแพง
+--   → ทาง (2) ใช้ได้แม้กำแพงตั้ง CanQuery=false (raycast ทะลุ)
+local climbRayP = RaycastParams.new()
+climbRayP.FilterType = Enum.RaycastFilterType.Exclude
+local lastMovingClock = clock()    -- เวลาล่าสุดที่ขยับเร็วจริง (>5 studs/s)
+
+local function wallAhead()
+    -- (1) raycast หน้า — แม่นยำ + ได้ทันที (ถ้ากำแพง query ได้)
+    climbRayP.FilterDescendantsInstances = LPChar and {LPChar} or {}
+    local mv   = LPHum.MoveDirection
+    local face = LPRoot.CFrame.LookVector
+    local pos  = LPRoot.Position
+    local dirs = { v3_new(mv.X, 0, mv.Z), v3_new(face.X, 0, face.Z) }
+    local hs   = { pos + v3_new(0, 1.5, 0), pos, pos - v3_new(0, 1.5, 0) }
+    for _, d in ipairs(dirs) do
+        if d.Magnitude > 0.05 then
+            d = d.Unit
+            for _, o in ipairs(hs) do
+                if workspace:Raycast(o, d * 4.5, climbRayP) then return true end
+            end
+        end
+    end
+    -- (2) fallback: กด WASD แต่ horizontal speed ต่ำ ≥ 0.12s = ติดกำแพง
+    --     (เผื่อกำแพง CanQuery=false → raycast ไม่เจอ)
+    local hv = LPRoot.AssemblyLinearVelocity
+    local horizSpd = v3_new(hv.X, 0, hv.Z).Magnitude
+    if horizSpd >= 5 then lastMovingClock = clock() end
+    return (clock() - lastMovingClock) > 0.12
+end
+
 bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
+
+    -- 1) CLIMB (priority) — กด WASD ชนกำแพง → ดันขึ้น (Y เท่านั้น → cresting ขึ้นขอบได้)
+    if CLIMB_ON and LPRoot and LPHum.MoveDirection.Magnitude > 0.1 and wallAhead() then
+        bv.MaxForce = v3_new(0, 1e5, 0)        -- คุมแค่ Y → X/Z ปล่อย Humanoid (ไม่ลอยออก)
+        bv.Velocity = v3_new(0, CLIMB_SPEED, 0)
+        return
+    end
+
+    -- 2) SPEED
     if SPEED_ON then
         local dir = LPHum.MoveDirection
         if dir.Magnitude > 0.1 then
-            local v = math_min(SPEED_VAL, SPEED_MAX)
             bv.MaxForce = v3_new(1e5, 0, 1e5)
-            bv.Velocity = dir * v
+            bv.Velocity = dir * math_min(SPEED_VAL, SPEED_MAX)
         else
             bv.MaxForce = v3_new(0, 0, 0)
             bv.Velocity = v3_new(0, 0, 0)
@@ -853,53 +895,6 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
--- ==================== WALLCLIMB ====================
--- raycast หน้า → ชนกำแพง → project moveDir ลงผิวกำแพง (ไม่ทะลุ) + push ขึ้น Y
-local climbRayP = RaycastParams.new()
-climbRayP.FilterType = Enum.RaycastFilterType.Exclude
-
-bind(RunService.Heartbeat, function()
-    if not CLIMB_ON or not bv or not bv.Parent then return end
-    if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
-
-    -- ต้องกด WASD จริงๆ ก่อน (ป้องกันลอยอัตโนมัติ)
-    local moveDir = LPHum.MoveDirection
-    if moveDir.Magnitude < 0.1 then return end
-    local horizMove = v3_new(moveDir.X, 0, moveDir.Z)
-    if horizMove.Magnitude < 0.05 then return end
-    horizMove = horizMove.Unit
-
-    -- raycast หา wall: ลอง MoveDir + Camera.Look (horizontal)
-    local castDirs = {
-        horizMove,
-        (function()
-            local c = v3_new(Camera.CFrame.LookVector.X, 0, Camera.CFrame.LookVector.Z)
-            return c.Magnitude > 0.05 and c.Unit or nil
-        end)(),
-    }
-    local origins = { LPRoot.Position, LPRoot.Position - v3_new(0, 2, 0) }
-    climbRayP.FilterDescendantsInstances = LPChar and {LPChar} or {}
-
-    for _, castDir in ipairs(castDirs) do
-        if not castDir then continue end
-        for _, origin in ipairs(origins) do
-            local hit = workspace:Raycast(origin, castDir * 3.5, climbRayP)
-            if hit then
-                local n = v3_new(hit.Normal.X, 0, hit.Normal.Z)
-                if n.Magnitude > 0.01 then
-                    n = n.Unit
-                    -- project player input direction ลงผิวกำแพง (ไม่ใช่ cast direction)
-                    local proj = horizMove - n * horizMove:Dot(n)
-                    bv.MaxForce = v3_new(1e5, 1e5, 1e5)
-                    bv.Velocity = proj * math_min(SPEED_VAL, SPEED_MAX)
-                                + v3_new(0, CLIMB_SPEED, 0)
-                    return
-                end
-            end
-        end
-    end
-end)
-
 -- ==================== GUI ====================
 local sg = Instance.new("ScreenGui")
 sg.Name = "FRSNGUI"; sg.ResetOnSpawn = false
@@ -919,7 +914,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.3"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.4"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1202,7 +1197,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
