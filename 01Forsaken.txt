@@ -1,7 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v3.4 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v3.5 (Survivor + Killer + Spectator)
+-- v3.5: Wallclimb [C] เกาะติด — ดันเข้ากำแพง (ไม่เด้งออก) + grace 0.2s (ไม่ร่วง)
 -- v3.4: FIX Wallclimb [C] — รวม Speed+Climb เป็น loop เดียว (เลิกแย่ง bv)
 --       ตรวจกำแพง 2 ทาง: raycast + "ดันไม่ขยับ" (ใช้ได้แม้ CanQuery=false)
---       ดันแค่ Y → cresting ขึ้นขอบได้ ไม่ลอยค้าง
 -- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
 -- v2.9: + Noclip [N] — ผ่านกำแพง ยังเดินติดพื้น (Humanoid floor raycast ทำงานแยก)
 -- v2.8: revert Stalk กลับ v2.5 (WalkSpeed=29 + Humanoid:Move) — CFrame warp โดนแบน
@@ -662,6 +662,7 @@ end })
 local climbRayP = RaycastParams.new()
 climbRayP.FilterType = Enum.RaycastFilterType.Exclude
 local lastMovingClock = clock()    -- เวลาล่าสุดที่ขยับเร็วจริง (>5 studs/s)
+local climbGraceUntil = 0          -- ไต่ต่อจนถึงเวลานี้แม้ตรวจไม่เจอชั่วครู่ (กันร่วง)
 
 local function wallAhead()
     -- (1) raycast หน้า — แม่นยำ + ได้ทันที (ถ้ากำแพง query ได้)
@@ -690,11 +691,17 @@ end
 bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
 
-    -- 1) CLIMB (priority) — กด WASD ชนกำแพง → ดันขึ้น (Y เท่านั้น → cresting ขึ้นขอบได้)
-    if CLIMB_ON and LPRoot and LPHum.MoveDirection.Magnitude > 0.1 and wallAhead() then
-        bv.MaxForce = v3_new(0, 1e5, 0)        -- คุมแค่ Y → X/Z ปล่อย Humanoid (ไม่ลอยออก)
-        bv.Velocity = v3_new(0, CLIMB_SPEED, 0)
-        return
+    -- 1) CLIMB (priority) — กด WASD ชนกำแพง → ดันเข้ากำแพง (เกาะอยู่) + ขึ้น
+    if CLIMB_ON and LPRoot and LPHum.MoveDirection.Magnitude > 0.1 then
+        if wallAhead() then climbGraceUntil = clock() + 0.2 end   -- เจอ → ต่อ grace
+        if clock() < climbGraceUntil then
+            -- ดันตามทิศ WASD (เข้ากำแพง = เกาะติด, ถึงขอบ = พุ่งขึ้นไปยืน) + ดันขึ้น Y
+            local fwd = v3_new(LPHum.MoveDirection.X, 0, LPHum.MoveDirection.Z)
+            local fwdVel = fwd.Magnitude > 0.05 and fwd.Unit * 8 or v3_new(0, 0, 0)
+            bv.MaxForce = v3_new(1e5, 1e5, 1e5)
+            bv.Velocity = fwdVel + v3_new(0, CLIMB_SPEED, 0)
+            return
+        end
     end
 
     -- 2) SPEED
@@ -914,7 +921,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.4"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.5"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1197,7 +1204,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.5] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
