@@ -65,8 +65,9 @@ local CFG = {
     SPROUT_TENDRIL_KW = { "sprouttendril", "tendril" },
     SPROUT_SAFE_DIST  = 22,   -- ห่างหนวด Sprout อย่างน้อยกี่ studs (จูนได้)
     -- elevator + collect (จาก DW02)
-    ELEV_WARP_Y      = 1,     -- วาปสูงเหนือ ElevatorPrompt (กันมุดพื้น)
-    ELEV_REWARP      = { 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5 },  -- rewarp ตาม PanicTimer (กันหลุด)
+    ELEV_WARP_Y      = 0,     -- วาปตำแหน่ง ElevatorPrompt พอดี (0 = ไม่ลอย → removeFly ปล่อยฟิสิกส์ตกพื้นเอง)
+    ELEV_REWARP      = { 12, 8, 5 },  -- rewarp ตาม PanicTimer เฉพาะจุดสำคัญ (ลดจาก 14 ครั้ง → 3 ครั้ง กัน warp ถี่ดูผิดปกติ)
+    ELEV_DRIFT_DIST  = 25,   -- ห่างจาก elevCF เกินนี้ = drift ออก → snap กลับ (ใช้แทน SEEN_VERIFY_DIST ที่ elevator เพื่อกัน snap บ่อย)
     DOUBLE_WARP_GAP  = 0.35,  -- ดับเบิลวาป: เว้นกี่วิระหว่างวาป 2 ครั้งหลังเก็บของ
     ITEM_NAMES       = { "ResearchCapsule" },
                         
@@ -88,8 +89,7 @@ local CFG = {
     HEAL_BANDAGE_SLOT  = nil,  -- บังคับช่อง (ข้าม auto-detect) ถ้าตั้ง | nil = หาเองจาก Inventory
     HEAL_MEDKIT_SLOT   = nil,
     HEAL_COOLDOWN      = 3,     -- กดใช้ heal ห่างกันกี่วิ
-    HEAL_MED_FRAC      = 0.5,   -- v4.35: เลือดหาย ≥ สัดส่วนนี้ของ Max → ใช้ Med (3 ใจ: 1ใจ=0.33→Bandage, 2ใจ=0.67→Med)
-    HEAL_MIN_FRAC      = 0.05,  -- เลือดหายน้อยกว่านี้ = ถือว่าเต็ม ไม่ heal
+    HEAL_MED_HEARTS    = 2,     -- ขาด ≥ นี้ ใจ → ใช้ Med | ขาด 1 ใจ → Bandage
 }
 
 -- ════════════════════════════════════════════════════════════════
@@ -332,6 +332,7 @@ function ELEV.warp()
     STATE.warpedToElev = true
     STATE.elevCF       = cf       -- v4.36: เก็บไว้ตรึงตอนรอลิฟต์ (กันดริฟต์ออก)
     STATE.lockedCFrame = nil
+    MOVE.removeFly()   -- v4.44: ปล่อย noclip/PlatformStand ทันที → ตัวยืนบนพื้นตามฟิสิกส์ปกติ ไม่ลอย (ลด suspicious จากท่า "กระโดด")
     status("✅ วาปลิฟต์!")
     return true
 end
@@ -1312,27 +1313,26 @@ function HEAL.check(char)
     if tick() - (STATE.lastHeal or 0) < CFG.HEAL_COOLDOWN then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum or hum.MaxHealth <= 0 then return end
-    -- v4.35: คิดเป็น "สัดส่วนเลือดที่หาย" (missing/Max) ไม่ใช่ HP ตรงๆ
-    --   เดิม missing = MaxHealth - Health (หน่วย HP) → ลด 1 ใจ (เช่น 33 HP) → missing>=2 จริง → ใช้ Med ผิด
-    --   1 ใจ (~0.33 ของ 3 ใจ) → Bandage | ≥2 ใจ (~0.67) → Med
-    local frac = (hum.MaxHealth - hum.Health) / hum.MaxHealth
-    if frac < CFG.HEAL_MIN_FRAC then return end   -- เลือดเกือบเต็ม → ไม่ heal (กดไม่ได้)
+    -- v4.44: นับ "ใจ" ตรงๆ — MaxHealth = ใจสูงสุด, Health = ใจปัจจุบัน (DW ใช้ตัวเลขใจเป็น unit)
+    --   round() กัน float error (Health=2.99 → missing=0.01 → round=0 → ไม่ heal)
+    --   ขาด 1 ใจ → Bandage | ขาด ≥ HEAL_MED_HEARTS(2) → Med
+    local missingHearts = math.round(hum.MaxHealth - hum.Health)
+    if missingHearts <= 0 then return end   -- ใจเต็ม → ไม่ heal
 
     local bSlot = CFG.HEAL_BANDAGE_SLOT or HEAL.findSlot(CFG.HEAL_BANDAGE_NAMES)
     local mSlot = CFG.HEAL_MEDKIT_SLOT  or HEAL.findSlot(CFG.HEAL_MEDKIT_NAMES)
     local slot, kind
-    if frac >= CFG.HEAL_MED_FRAC then
-        slot, kind = (mSlot or bSlot), (mSlot and "Med" or "Bandage")  -- หายเยอะ (≥2 ใจ) → Med ก่อน
+    if missingHearts >= CFG.HEAL_MED_HEARTS then
+        slot, kind = (mSlot or bSlot), (mSlot and "Med" or "Bandage")  -- ขาด ≥ 2 ใจ → Med ก่อน
     else
-        slot, kind = (bSlot or mSlot), (bSlot and "Bandage" or "Med")  -- หายน้อย (1 ใจ) → Bandage ก่อน
+        slot, kind = (bSlot or mSlot), (bSlot and "Bandage" or "Med")  -- ขาด 1 ใจ → Bandage ก่อน
     end
-    local pct = math.floor(frac * 100)
     if slot then
         HEAL.use(slot)
         STATE.lastHeal = tick()
-        status("❤️ heal " .. kind .. " ช่อง " .. slot .. " (หาย " .. pct .. "%)")
+        status("❤️ heal " .. kind .. " ช่อง " .. slot .. " (ขาด " .. missingHearts .. " ใจ)")
     else
-        status("⚠️ หาย " .. pct .. "% แต่ไม่มี Bandage/Med ในช่อง")
+        status("⚠️ ขาด " .. missingHearts .. " ใจ — ไม่มี Bandage/Med ในช่อง")
     end
 end
 
@@ -1537,8 +1537,9 @@ local conn = RS.Heartbeat:Connect(function()
                     end
                 end
             end
-            -- v4.36: ถ้าดริฟต์ออกจากลิฟต์ (วาปไม่ติด/ตัวไหล) → ตรึงกลับทันที (กันไม่เข้าลิฟต์)
-            if STATE.elevCF and (hrp.Position - STATE.elevCF.Position).Magnitude > CFG.SEEN_VERIFY_DIST then
+            -- v4.44: drift ออกจากลิฟต์เกิน ELEV_DRIFT_DIST (25) → noclip+snap กลับ (threshold ใหญ่ขึ้นจาก 12 กัน snap บ่อย)
+            --   ปกติตัวยืนพื้น → ห่างไม่เกิน 1-2 studs → removeFly คงไว้ (ไม่ลอย)
+            if STATE.elevCF and (hrp.Position - STATE.elevCF.Position).Magnitude > CFG.ELEV_DRIFT_DIST then
                 MOVE.applyNoclip(char)
                 MOVE.pin(hrp, STATE.elevCF)
             else
@@ -1666,7 +1667,7 @@ local titleLbl = Instance.new("TextLabel")
 titleLbl.Size = UDim2.new(1, -26, 0, 24)
 titleLbl.BackgroundColor3 = Color3.fromRGB(20, 60, 30)
 titleLbl.TextColor3 = Color3.fromRGB(140, 255, 160)
-titleLbl.Text = "DW Auto Gen v4.43 [H]"
+titleLbl.Text = "DW Auto Gen v4.44 [H]"
 titleLbl.Font = Enum.Font.Code titleLbl.TextSize = 12 titleLbl.BorderSizePixel = 0
 titleLbl.Parent = frame
 Instance.new("UICorner", titleLbl).CornerRadius = UDim.new(0, 6)
@@ -1765,6 +1766,6 @@ FLOOR.watch()
 STATE.lastMapRef = WORLD.getMap()
 pcall(function() STATE.lastFloor = workspace.Info.Floor.Value end)
 refreshToggle()
-warn("[DW17] Auto Gen v4.43 loaded — กองทัพบอท: ตัดสิน mount ด้วย per-player (Decoding/skillcheck) ไม่เชื่อ SlotNSpinning ที่ shared → phantom ทิ้งจริง")
+warn("[DW17] Auto Gen v4.44 loaded — elevator: removeFly+REWARP 3จุด → ยืนพื้น | heal: นับใจตรงๆ (round) แทน %")
 warn("[DW17] fireproximityprompt = " .. tostring(fireproximityprompt ~= nil)
     .. " | VIM = " .. tostring(VIM ~= nil))
