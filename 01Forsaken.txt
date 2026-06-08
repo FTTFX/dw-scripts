@@ -1,4 +1,5 @@
--- 01Forsaken.txt — Forsaken Helper v2.9 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v3.0 (Survivor + Killer + Spectator)
+-- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
 -- v2.9: + Noclip [N] — ผ่านกำแพง ยังเดินติดพื้น (Humanoid floor raycast ทำงานแยก)
 -- v2.8: revert Stalk กลับ v2.5 (WalkSpeed=29 + Humanoid:Move) — CFrame warp โดนแบน
 -- v2.5: AutoGen ใหม่ — fire prompt + RE:FireServer ×6 cadence 2.5s (ดัน progress จริง)
@@ -107,7 +108,9 @@ local WatchOn   = false
 local SPEED_ON  = false
 local AUTOGEN_ON = false
 local STALK_ON  = false
-local NOCLIP_ON = false
+local NOCLIP_ON  = false
+local CLIMB_ON   = false
+local CLIMB_SPEED = 20   -- ความเร็วขึ้นกำแพง (studs/s)
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
@@ -851,6 +854,33 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
+-- ==================== WALLCLIMB ====================
+-- raycast หน้า → ชนกำแพง → project moveDir ลงผิวกำแพง (ไม่ทะลุ) + push ขึ้น Y
+local climbRayP = RaycastParams.new()
+climbRayP.FilterType = Enum.RaycastFilterType.Exclude
+
+bind(RunService.Heartbeat, function()
+    if not CLIMB_ON or not bv or not bv.Parent then return end
+    if not LPRoot or not LPHum or LPHum.Health <= 0 then return end
+    local moveDir = LPHum.MoveDirection
+    if moveDir.Magnitude < 0.1 then return end
+    local horizDir = v3_new(moveDir.X, 0, moveDir.Z)
+    if horizDir.Magnitude < 0.01 then return end
+    climbRayP.FilterDescendantsInstances = LPChar and {LPChar} or {}
+    local hit = workspace:Raycast(LPRoot.Position, horizDir.Unit * 2.5, climbRayP)
+    if hit then
+        -- normal แนวนอนของกำแพง
+        local n = v3_new(hit.Normal.X, 0, hit.Normal.Z)
+        if n.Magnitude < 0.01 then return end
+        n = n.Unit
+        -- ตัด component ที่ทะลุกำแพงออก → เหลือแค่ lateral
+        local proj = moveDir - n * moveDir:Dot(n)
+        bv.MaxForce = v3_new(1e5, 1e5, 1e5)
+        bv.Velocity = v3_new(proj.X, 0, proj.Z) * math_min(SPEED_VAL, SPEED_MAX)
+                    + v3_new(0, CLIMB_SPEED, 0)
+    end
+end)
+
 -- ==================== NOCLIP ====================
 -- ปิด CanCollide ทุก part ทุก frame → ผ่านกำแพงได้
 -- Humanoid floor-detect ทำงานแยก (raycast) → ยังเดินติดพื้น ไม่บิน
@@ -882,7 +912,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v2.9"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.0"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -970,7 +1000,7 @@ statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
 hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/T/G/F/K/R/N(clip)"; hintL.TextScaled = true
+hintL.Text = "H/T/G/F/K/R | C=Climb N=Clip"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -1083,6 +1113,8 @@ bind(UIS.InputBegan, function(input, gp)
     elseif kc == Enum.KeyCode.G then toggleAutoGen()
     elseif kc == Enum.KeyCode.F then togS()
     elseif kc == Enum.KeyCode.K then togK()
+    elseif kc == Enum.KeyCode.C then
+        CLIMB_ON = not CLIMB_ON
     elseif kc == Enum.KeyCode.N then
         NOCLIP_ON = not NOCLIP_ON
         if not NOCLIP_ON and LPChar then
@@ -1113,7 +1145,8 @@ task.spawn(function()
         end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
-        if NOCLIP_ON then statL.Text = statL.Text .. " | 👻NC" end
+        if CLIMB_ON  then statL.Text = statL.Text .. " | 🧗Climb" end
+        if NOCLIP_ON then statL.Text = statL.Text .. " | 👻Clip" end
         if MY_ROLE == "killer" then
             roleL.Text = "Role: 🔪 KILLER"
             roleL.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -1170,7 +1203,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v2.9] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
