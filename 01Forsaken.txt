@@ -1,6 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v3.8 (Survivor + Killer + Spectator)
--- v3.8: Climb [C] = ไต่กำแพง + velocity-hold (ไม่ตก) | W=ขึ้น S=ลง A/D=ไถลข้าง
---       ตรวจกำแพงรอบตัว 8 ทิศ → ไม่มีกำแพง = ปล่อย hold ร่วงปกติ (ออกจาก Fly อัตโนมัติ)
+-- 01Forsaken.txt — Forsaken Helper v3.9 (Survivor + Killer + Spectator)
+-- v3.9: Climb STEALTH — spoof Humanoid→Climbing state ทุก frame (server เห็นเป็นปีนบันได legit)
+--       + ลด speed 16 (เท่า WalkSpeed) → หลอก heuristic "ลอย+ไม่ตก=บิน" ที่เคยโดนเตะ
+-- v3.8: Climb [C] = ไต่กำแพง + velocity-hold (ไม่ตก) | ตรวจกำแพง 8 ทิศ → ไม่มีกำแพง=ร่วง
 -- v3.6-3.7: Fly free-move (ยกเลิก — กลับมาเป็น climb แบบไม่ตกตาม req)
 -- v3.5: Wallclimb [C] เกาะติด — ดันเข้ากำแพง (ไม่เด้งออก) + grace 0.2s (ไม่ร่วง)
 -- v3.4: FIX Wallclimb [C] — รวม Speed+Climb เป็น loop เดียว (เลิกแย่ง bv)
@@ -114,7 +115,7 @@ local SPEED_ON  = false
 local AUTOGEN_ON = false
 local STALK_ON  = false
 local CLIMB_ON    = false
-local CLIMB_SPEED = 24    -- ความเร็วไต่กำแพง (studs/s)
+local CLIMB_SPEED = 16    -- ความเร็วไต่กำแพง — 16 = เท่า WalkSpeed (ดู legit, ไม่โดน flag เร็วไป)
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
@@ -690,7 +691,9 @@ bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
 
     -- 1) CLIMB (priority) — เกาะกำแพงไม่ตก | W=ขึ้น S=ลง A/D=ไถลข้าง | ปล่อยปุ่ม=ค้างนิ่ง
-    if CLIMB_ON and LPRoot then
+    -- STEALTH: spoof Humanoid → Climbing state ทุก frame → server เห็นเป็น "ปีนบันได" (legit)
+    --   ข้าม heuristic "ลอย+ไม่ตก=บิน" ที่เคยโดนเตะ
+    if CLIMB_ON and LPRoot and LPHum then
         local n = nearestWallNormal()
         if n then
             local along = n:Cross(UP)
@@ -700,12 +703,14 @@ bind(RunService.Heartbeat, function()
             if UIS:IsKeyDown(Enum.KeyCode.S) then vel = vel - UP * CLIMB_SPEED end
             if UIS:IsKeyDown(Enum.KeyCode.D) then vel = vel + along * CLIMB_SPEED end
             if UIS:IsKeyDown(Enum.KeyCode.A) then vel = vel - along * CLIMB_SPEED end
+            pcall(function() LPHum:ChangeState(Enum.HumanoidStateType.Climbing) end)
             bv.MaxForce = v3_new(1e5, 1e5, 1e5)
             bv.Velocity = vel
             lastClimbVel = vel
             climbHoldUntil = clock() + 0.15   -- grace ข้ามขอบ/ตรวจหลุด
             return
         elseif clock() < climbHoldUntil then
+            pcall(function() LPHum:ChangeState(Enum.HumanoidStateType.Climbing) end)
             bv.MaxForce = v3_new(1e5, 1e5, 1e5)
             bv.Velocity = lastClimbVel       -- ค้าง velocity เดิมต่อ (ข้ามขอบ)
             return
@@ -930,7 +935,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.8"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.9"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1213,7 +1218,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.8] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.9] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
