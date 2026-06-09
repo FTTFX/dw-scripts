@@ -1,6 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v3.6 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v3.7 (Survivor + Killer + Spectator)
+-- v3.7: FLY [C] กด Space (กระโดด) = ออกจาก Fly ร่วงลงปกติ | up ใช้เงยกล้อง+W
 -- v3.6: เปลี่ยน Climb → FLY [C] — บินตามกล้อง, ปล่อยปุ่ม=lock ลอยนิ่ง
---       Space=ขึ้น Shift/Ctrl=ลง | velocity ตรงๆ ไม่สู้ physics (climb เกาะไม่อยู่)
+--       velocity ตรงๆ ไม่สู้ physics (climb เกาะไม่อยู่)
 -- v3.5: Wallclimb [C] เกาะติด — ดันเข้ากำแพง (ไม่เด้งออก) + grace 0.2s (ไม่ร่วง)
 -- v3.4: FIX Wallclimb [C] — รวม Speed+Climb เป็น loop เดียว (เลิกแย่ง bv)
 -- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
@@ -662,8 +663,9 @@ end })
 bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
 
-    -- 1) FLY (priority) — บินตามกล้อง | ปล่อยปุ่ม = lock ลอยนิ่ง
-    --    W/S=หน้า/หลังตามกล้อง (เงยกล้อง+W=ขึ้น) | A/D=ข้าง | Space=ขึ้น | Shift/Ctrl=ลง
+    -- 1) FLY (priority) — บินตามกล้อง ไม่ตก | ปล่อยปุ่ม = lock ลอยนิ่ง
+    --    W/S=หน้า/หลังตามกล้อง (เงยกล้อง+W=ขึ้น) | A/D=ข้าง | Shift/Ctrl=ลง
+    --    *** กด Space (กระโดด) = ออกจาก Fly → ร่วงลงปกติ ***
     if FLY_ON and LPRoot then
         local cf  = Camera.CFrame
         local dir = v3_new(0, 0, 0)
@@ -671,7 +673,6 @@ bind(RunService.Heartbeat, function()
         if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - cf.LookVector end
         if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + cf.RightVector end
         if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - cf.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.Space) then dir = dir + v3_new(0, 1, 0) end
         if UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
             dir = dir - v3_new(0, 1, 0)
         end
@@ -897,7 +898,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.6"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.7"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -985,7 +986,7 @@ statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
 hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/T/G/F/K/R | C=Fly"; hintL.TextScaled = true
+hintL.Text = "H/T/G/F/K/R | C=Fly Space=ออก"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -1107,6 +1108,14 @@ bind(UIS.InputBegan, function(input, gp)
     end
 end)
 
+-- กด Space (กระโดด) ระหว่างบิน = ออกจาก Fly ทันที (ร่วงลงปกติ)
+-- แยก bind + ไม่เช็ค gp เพราะ jump มักโดน core script process (gp=true)
+bind(UIS.InputBegan, function(input)
+    if input.KeyCode == Enum.KeyCode.Space and FLY_ON then
+        FLY_ON = false
+    end
+end)
+
 -- ==================== Status updater ====================
 task.spawn(function()
     while task.wait(1) do
@@ -1123,7 +1132,7 @@ task.spawn(function()
         end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
-        if FLY_ON    then statL.Text = statL.Text .. " | 🕊️Fly" end
+        if FLY_ON    then statL.Text = statL.Text .. " | 🕊️Fly(Space=ออก)" end
         if MY_ROLE == "killer" then
             roleL.Text = "Role: 🔪 KILLER"
             roleL.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -1180,7 +1189,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.6] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.7] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
