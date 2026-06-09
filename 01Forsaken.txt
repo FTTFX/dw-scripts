@@ -1,7 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v3.7 (Survivor + Killer + Spectator)
--- v3.7: FLY [C] กด Space (กระโดด) = ออกจาก Fly ร่วงลงปกติ | up ใช้เงยกล้อง+W
--- v3.6: เปลี่ยน Climb → FLY [C] — บินตามกล้อง, ปล่อยปุ่ม=lock ลอยนิ่ง
---       velocity ตรงๆ ไม่สู้ physics (climb เกาะไม่อยู่)
+-- 01Forsaken.txt — Forsaken Helper v3.8 (Survivor + Killer + Spectator)
+-- v3.8: Climb [C] = ไต่กำแพง + velocity-hold (ไม่ตก) | W=ขึ้น S=ลง A/D=ไถลข้าง
+--       ตรวจกำแพงรอบตัว 8 ทิศ → ไม่มีกำแพง = ปล่อย hold ร่วงปกติ (ออกจาก Fly อัตโนมัติ)
+-- v3.6-3.7: Fly free-move (ยกเลิก — กลับมาเป็น climb แบบไม่ตกตาม req)
 -- v3.5: Wallclimb [C] เกาะติด — ดันเข้ากำแพง (ไม่เด้งออก) + grace 0.2s (ไม่ร่วง)
 -- v3.4: FIX Wallclimb [C] — รวม Speed+Climb เป็น loop เดียว (เลิกแย่ง bv)
 -- v3.0: + Wallclimb [C] — ไต่กำแพงขึ้น CanCollide ยังอยู่ ไม่ทะลุ
@@ -113,8 +113,8 @@ local WatchOn   = false
 local SPEED_ON  = false
 local AUTOGEN_ON = false
 local STALK_ON  = false
-local FLY_ON    = false
-local FLY_SPEED = 50    -- ความเร็วบิน (studs/s)
+local CLIMB_ON    = false
+local CLIMB_SPEED = 24    -- ความเร็วไต่กำแพง (studs/s)
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
@@ -657,28 +657,60 @@ table.insert(CONNS, { Disconnect = function()
     pcall(function() RunService:UnbindFromRenderStep(WATCH_BIND) end)
 end })
 
--- ==================== Movement controller (Fly > Speed) ====================
--- Fly = override velocity ตรงๆ ไม่สู้ physics → เกาะอยู่ชัวร์ (wallclimb สู้แรงดึงไม่ไหว)
--- ใช้ velocity (ไม่ใช่ CFrame warp) → ปลอดภัยกว่า teleport ที่เคยโดนแบน
+-- ==================== Movement controller (Climb-hold > Speed) ====================
+-- Climb = ไต่กำแพง WASD แต่ใช้ velocity-hold (จาก Fly) → "ไม่ตก" ตอนเกาะกำแพง
+-- ไม่มีกำแพงรอบตัว → ปล่อย hold → ร่วงลงปกติ (= ออกจาก Fly อัตโนมัติ)
+local UP = v3_new(0, 1, 0)
+local climbRayP = RaycastParams.new()
+climbRayP.FilterType = Enum.RaycastFilterType.Exclude
+local lastClimbVel   = v3_new(0, 0, 0)
+local climbHoldUntil = 0   -- ค้าง velocity ต่ออีกนิดตอนข้ามขอบ/ตรวจหลุดแว้บเดียว
+
+-- หากำแพงใกล้สุดรอบตัว (8 ทิศ × 2 ระดับ) → คืน normal แนวนอน (nil = ไม่มีกำแพง)
+local function nearestWallNormal()
+    climbRayP.FilterDescendantsInstances = LPChar and {LPChar} or {}
+    local pos = LPRoot.Position
+    local origins = { pos + UP * 1.2, pos - UP * 1.2 }
+    local best, bestDist = nil, math_huge
+    for i = 0, 7 do
+        local a = i * 0.785398   -- 45° step (π/4)
+        local d = v3_new(math.cos(a), 0, math.sin(a))
+        for _, o in ipairs(origins) do
+            local r = workspace:Raycast(o, d * 4.5, climbRayP)
+            if r and r.Distance < bestDist then
+                local n = v3_new(r.Normal.X, 0, r.Normal.Z)
+                if n.Magnitude > 0.01 then bestDist = r.Distance; best = n.Unit end
+            end
+        end
+    end
+    return best
+end
+
 bind(RunService.Heartbeat, function()
     if not bv or not bv.Parent or not LPHum or LPHum.Health <= 0 then return end
 
-    -- 1) FLY (priority) — บินตามกล้อง ไม่ตก | ปล่อยปุ่ม = lock ลอยนิ่ง
-    --    W/S=หน้า/หลังตามกล้อง (เงยกล้อง+W=ขึ้น) | A/D=ข้าง | Shift/Ctrl=ลง
-    --    *** กด Space (กระโดด) = ออกจาก Fly → ร่วงลงปกติ ***
-    if FLY_ON and LPRoot then
-        local cf  = Camera.CFrame
-        local dir = v3_new(0, 0, 0)
-        if UIS:IsKeyDown(Enum.KeyCode.W) then dir = dir + cf.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.S) then dir = dir - cf.LookVector end
-        if UIS:IsKeyDown(Enum.KeyCode.D) then dir = dir + cf.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.A) then dir = dir - cf.RightVector end
-        if UIS:IsKeyDown(Enum.KeyCode.LeftShift) or UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
-            dir = dir - v3_new(0, 1, 0)
+    -- 1) CLIMB (priority) — เกาะกำแพงไม่ตก | W=ขึ้น S=ลง A/D=ไถลข้าง | ปล่อยปุ่ม=ค้างนิ่ง
+    if CLIMB_ON and LPRoot then
+        local n = nearestWallNormal()
+        if n then
+            local along = n:Cross(UP)
+            along = along.Magnitude > 0.01 and along.Unit or v3_new(0, 0, 0)
+            local vel = -n * 4   -- ดันเข้ากำแพง = เกาะติด (ปล่อยปุ่ม = ค้างนิ่ง ไม่ตก)
+            if UIS:IsKeyDown(Enum.KeyCode.W) then vel = vel + UP * CLIMB_SPEED end
+            if UIS:IsKeyDown(Enum.KeyCode.S) then vel = vel - UP * CLIMB_SPEED end
+            if UIS:IsKeyDown(Enum.KeyCode.D) then vel = vel + along * CLIMB_SPEED end
+            if UIS:IsKeyDown(Enum.KeyCode.A) then vel = vel - along * CLIMB_SPEED end
+            bv.MaxForce = v3_new(1e5, 1e5, 1e5)
+            bv.Velocity = vel
+            lastClimbVel = vel
+            climbHoldUntil = clock() + 0.15   -- grace ข้ามขอบ/ตรวจหลุด
+            return
+        elseif clock() < climbHoldUntil then
+            bv.MaxForce = v3_new(1e5, 1e5, 1e5)
+            bv.Velocity = lastClimbVel       -- ค้าง velocity เดิมต่อ (ข้ามขอบ)
+            return
         end
-        bv.MaxForce = v3_new(1e5, 1e5, 1e5)
-        bv.Velocity = dir.Magnitude > 0.1 and dir.Unit * FLY_SPEED or v3_new(0, 0, 0)
-        return
+        -- ไม่มีกำแพง + หมด grace → ปล่อย hold → ตกปกติ (ออกจาก Fly)
     end
 
     -- 2) SPEED
@@ -898,7 +930,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.7"; titleL.TextScaled = true
+titleL.Text = "Forsaken v3.8"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -986,7 +1018,7 @@ statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
 hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/T/G/F/K/R | C=Fly Space=ออก"; hintL.TextScaled = true
+hintL.Text = "H/T/G/F/K/R | C=Climb(เกาะกำแพงไม่ตก)"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -1100,19 +1132,11 @@ bind(UIS.InputBegan, function(input, gp)
     elseif kc == Enum.KeyCode.F then togS()
     elseif kc == Enum.KeyCode.K then togK()
     elseif kc == Enum.KeyCode.C then
-        FLY_ON = not FLY_ON
+        CLIMB_ON = not CLIMB_ON
     elseif kc == Enum.KeyCode.R then
         rescan(); scanGenerators(); rebuildGenHL(); scanItems(); rebuildItemHL()
         rescanBtn.Text = "Done!"
         task.delay(1.2, function() rescanBtn.Text = "Rescan [R]" end)
-    end
-end)
-
--- กด Space (กระโดด) ระหว่างบิน = ออกจาก Fly ทันที (ร่วงลงปกติ)
--- แยก bind + ไม่เช็ค gp เพราะ jump มักโดน core script process (gp=true)
-bind(UIS.InputBegan, function(input)
-    if input.KeyCode == Enum.KeyCode.Space and FLY_ON then
-        FLY_ON = false
     end
 end)
 
@@ -1132,7 +1156,7 @@ task.spawn(function()
         end
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
-        if FLY_ON    then statL.Text = statL.Text .. " | 🕊️Fly(Space=ออก)" end
+        if CLIMB_ON  then statL.Text = statL.Text .. " | 🧗Climb" end
         if MY_ROLE == "killer" then
             roleL.Text = "Role: 🔪 KILLER"
             roleL.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -1189,7 +1213,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.7] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v3.8] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
