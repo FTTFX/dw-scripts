@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v4.0 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v4.1 (Survivor + Killer + Spectator)
+-- v4.1: + KICK-GUARD — hook __namecall บล็อก LP:Kick() จาก client AC + log ต้นตอ
+--       (โดนเตะตอน noclip → ดู console ถ้าขึ้น "BLOCKED Kick"=client-side ชนะ / เงียบ=server disconnect)
 -- v4.0: + Noclip [N] STEALTH — CanCollide=false ทะลุกำแพง + spoof Climbing ทุก frame + cap speed 16
 --       (เดินทะลุด้วย WalkSpeed ปกติ ไม่ warp → ดู legit | ปิด=คืน CanCollide ทันที)
 -- v3.9: Climb STEALTH — spoof Humanoid→Climbing state ทุก frame (server เห็นเป็นปีนบันได legit)
@@ -103,6 +105,35 @@ local CONNS      = _G.FRSN_CONNS
 local Highlights = _G.FRSN_HL
 local GenHL      = _G.FRSN_GEN_HL
 local ItemHL     = _G.FRSN_ITEM_HL
+
+-- ==================== KICK-GUARD (บล็อก client-side anti-cheat kick) ====================
+-- โดนเตะตอน Noclip/Climb = client AC (Systems.Character) เรียก LP:Kick()
+-- → ดัก __namecall เมธอด "Kick" บนตัวเรา → บล็อก + log ว่าใครเรียก (เห็นต้นตอใน console)
+-- hook ครั้งเดียว (flag กัน re-run stack) | executor ไม่มี hookmetamethod = ข้ามเงียบ
+if not _G.FRSN_KICKGUARD then
+    _G.FRSN_KICKGUARD = true
+    local installed = pcall(function()
+        local hookmeta = rawget(getfenv(), "hookmetamethod") or hookmetamethod
+        local getnc    = rawget(getfenv(), "getnamecallmethod") or getnamecallmethod
+        if not (hookmeta and getnc) then error("no hookmetamethod") end
+        local oldNC
+        oldNC = hookmeta(game, "__namecall", function(self, ...)
+            local m = getnc()
+            if (m == "Kick" or m == "kick") and self == _G.FRSN_LP then
+                local tb = ""
+                pcall(function() tb = debug.traceback() end)
+                warn("[FRSN] 🛡️ BLOCKED Kick! ต้นตอ:\n" .. tb)
+                return nil   -- กลืน → ไม่เตะ
+            end
+            return oldNC(self, ...)
+        end)
+        print("[FRSN] kick-guard ทำงาน (hookmetamethod __namecall)")
+    end)
+    if not installed then
+        warn("[FRSN] kick-guard ติดตั้งไม่ได้ — executor ไม่ support hookmetamethod")
+    end
+end
+_G.FRSN_LP = LP   -- kick-guard closure อ้าง _G.FRSN_LP (อัปเดตได้แม้ re-run โดยไม่ re-hook)
 
 local function bind(sig, fn)
     local c = sig:Connect(fn)
@@ -972,7 +1003,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v4.0"; titleL.TextScaled = true
+titleL.Text = "Forsaken v4.1"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1259,7 +1290,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v4.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v4.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
