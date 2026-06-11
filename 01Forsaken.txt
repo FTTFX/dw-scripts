@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v4.2 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v4.3 (Survivor + Killer + Spectator)
+-- v4.3: มือถือไม่มี console → AC-guard log เซฟลงไฟล์ FRSN_ac.txt + ก๊อปคลิปบอร์ด + โชว์บนจอ
+--       (รอดจากโดนเตะ → user paste ให้ดูได้ ว่าตัวเตะมาทาง client/remote/server)
 -- v4.2: AC-GUARD — เจอ "ForsakenCheatKiller 003 noclipping". ครอบ 3 ทาง: __namecall Kick +
 --       hookfunction(Kick) direct-call + sniff FireServer/Invoke ตอน noclip (จับ remote ฟ้อง server)
 -- v4.1: + KICK-GUARD — hook __namecall บล็อก LP:Kick() จาก client AC + log ต้นตอ
@@ -120,6 +122,19 @@ local function _argstr(...)
     for i = 1, math.min(n, 4) do t[i] = tostring((select(i, ...))) end
     return table.concat(t, ", ") .. (n > 4 and (" …(+" .. (n-4) .. ")") or "")
 end
+-- log แบบมือถือ: ไม่มี console → เซฟลงไฟล์ FRSN_ac.txt + ก๊อปคลิปบอร์ด (รอดจากโดนเตะ)
+_G.FRSN_LOG = _G.FRSN_LOG or ""
+local _wf  = rawget(getfenv(), "writefile")  or rawget(_G, "writefile")
+local _scb = rawget(getfenv(), "setclipboard") or rawget(_G, "setclipboard")
+        or rawget(getfenv(), "toclipboard") or rawget(_G, "toclipboard")
+local function aclog(msg)
+    _G.FRSN_LOG = (_G.FRSN_LOG .. "\n" .. tostring(msg))
+    if #_G.FRSN_LOG > 6000 then _G.FRSN_LOG = _G.FRSN_LOG:sub(-6000) end
+    if _wf  then pcall(_wf, "FRSN_ac.txt", _G.FRSN_LOG) end
+    if _scb then pcall(_scb, _G.FRSN_LOG) end
+    if _G.FRSN_HINTL then pcall(function() _G.FRSN_HINTL.Text = tostring(msg) end) end
+    pcall(function() warn(msg) end)
+end
 if not _G.FRSN_KICKGUARD then
     _G.FRSN_KICKGUARD = true
     local env = getfenv()
@@ -133,30 +148,32 @@ if not _G.FRSN_KICKGUARD then
         oldNC = hookmeta(game, "__namecall", function(self, ...)
             local m = getnc()
             if (m == "Kick" or m == "kick") and self == _G.FRSN_LP then
-                warn("[FRSN] 🛡️ BLOCKED Kick (namecall)! ต้นตอ:\n" .. debug.traceback())
+                aclog("[FRSN] 🛡️ BLOCKED Kick (namecall)! ต้นตอ:\n" .. debug.traceback())
                 return nil
             end
             if _G.FRSN_SNIFF and (m == "FireServer" or m == "InvokeServer"
                                   or m == "fireServer" or m == "invokeServer") then
                 local nm = "?"; pcall(function() nm = self:GetFullName() end)
-                warn("[FRSN] 📡 " .. m .. " → " .. nm .. " | args: " .. _argstr(...))
+                aclog("[FRSN] 📡 " .. m .. " → " .. nm .. " | args: " .. _argstr(...))
             end
             return oldNC(self, ...)
         end)
-        print("[FRSN] AC-guard: __namecall hook ทำงาน")
+        aclog("[FRSN] AC-guard: __namecall hook OK")
     end)
     -- (2) direct-call Kick
     pcall(function()
         if not hookfn then return end
         local realKick; realKick = hookfn(_G.FRSN_LP.Kick, function(self, ...)
             if self == _G.FRSN_LP then
-                warn("[FRSN] 🛡️ BLOCKED Kick (direct)! ต้นตอ:\n" .. debug.traceback())
+                aclog("[FRSN] 🛡️ BLOCKED Kick (direct)! ต้นตอ:\n" .. debug.traceback())
                 return nil
             end
             return realKick(self, ...)
         end)
-        print("[FRSN] AC-guard: hookfunction(Kick) ทำงาน")
+        aclog("[FRSN] AC-guard: hookfunction(Kick) OK")
     end)
+    aclog("[FRSN] AC-guard installed | hookfn=" .. tostring(hookfn ~= nil)
+        .. " writefile=" .. tostring(_wf ~= nil) .. " clip=" .. tostring(_scb ~= nil))
 end
 
 local function bind(sig, fn)
@@ -1027,7 +1044,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v4.2"; titleL.TextScaled = true
+titleL.Text = "Forsaken v4.3"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1117,6 +1134,7 @@ hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
 hintL.Text = "H/T/G/F/K/R | C=Climb | N=Noclip(ทะลุกำแพง)"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
+_G.FRSN_HINTL = hintL   -- ให้ aclog โชว์ event ล่าสุดบนจอ (เผื่อ guard บล็อกได้ ไม่โดนเตะ)
 
 -- Drag
 local drag, dS, fS = false, nil, nil
@@ -1315,7 +1333,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v4.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v4.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
