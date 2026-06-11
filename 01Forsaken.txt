@@ -1,6 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v4.3 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v4.4 (Survivor + Killer + Spectator)
+-- v4.4: FIX noclip โดนเตะ! ตัด spoof Climbing + cap WalkSpeed ออก (มันคือตัวจุดชนวน
+--       ForsakenCheatKiller 003 "assumed noclipping") → เหลือ plain CanCollide=false (DW method)
 -- v4.3: มือถือไม่มี console → AC-guard log เซฟลงไฟล์ FRSN_ac.txt + ก๊อปคลิปบอร์ด + โชว์บนจอ
---       (รอดจากโดนเตะ → user paste ให้ดูได้ ว่าตัวเตะมาทาง client/remote/server)
 -- v4.2: AC-GUARD — เจอ "ForsakenCheatKiller 003 noclipping". ครอบ 3 ทาง: __namecall Kick +
 --       hookfunction(Kick) direct-call + sniff FireServer/Invoke ตอน noclip (จับ remote ฟ้อง server)
 -- v4.1: + KICK-GUARD — hook __namecall บล็อก LP:Kick() จาก client AC + log ต้นตอ
@@ -810,10 +811,10 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
--- ==================== NOCLIP loop [N] — ทะลุกำแพง STEALTH ====================
--- CanCollide=false ทุก frame (ฝั่ง server ไม่เห็นค่านี้ — ปลอดภัยเอง)
--- สิ่งที่ทำให้รอด: เดินทะลุด้วย WalkSpeed ปกติ (ไม่ warp) + spoof Climbing ทุก frame
---   → server เห็นเป็น "ปีนบันได" ไม่ใช่ "ลอยทะลุของแข็ง" → ข้าม heuristic ที่เคยเตะ climb
+-- ==================== NOCLIP loop [N] — ทะลุกำแพง (plain, DW method) ====================
+-- v4.4: ตัด spoof Climbing + cap WalkSpeed ออก! (เป็นตัวจุดชนวน ForsakenCheatKiller 003)
+--   ForsakenCheatKiller 003 จับ "อยู่ใน Climbing state แต่ไม่มีบันได = โกง" → spoof = ฟ้องตัวเอง
+-- เหลือแค่ CanCollide=false เฉยๆ + เดินทะลุด้วย WalkSpeed ปกติ (วิธีที่เคยทำผ่านใน DW)
 -- ปิด → คืน CanCollide เดิมให้ทุก part ทันที
 local function setCharCollide(state)
     if not LPChar then return end
@@ -836,11 +837,7 @@ end
 bind(RunService.Heartbeat, function()
     if not NOCLIP_ON then return end
     if not LPChar or not LPHum or LPHum.Health <= 0 then return end
-    setCharCollide(false)
-    -- STEALTH: spoof ปีนบันได ทุก frame → ตำแหน่งทะลุกำแพงดู legit
-    pcall(function() LPHum:ChangeState(Enum.HumanoidStateType.Climbing) end)
-    -- cap speed ให้ ≤ 16 ตอน noclip (ห้ามพุ่ง position-delta = โดน flag)
-    if LPHum.WalkSpeed > 16 then LPHum.WalkSpeed = 16 end
+    setCharCollide(false)   -- CanCollide=false เฉยๆ → เดินทะลุด้วย WalkSpeed ปกติ (ไม่ spoof state)
 end)
 
 -- ==================== AUTO-GEN loop (Survivor only) — NO TELEPORT ====================
@@ -1044,7 +1041,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v4.3"; titleL.TextScaled = true
+titleL.Text = "Forsaken v4.4"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1333,7 +1330,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v4.3] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v4.4] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
