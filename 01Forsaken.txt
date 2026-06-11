@@ -1,6 +1,7 @@
--- 01Forsaken.txt — Forsaken Helper v4.1 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v4.2 (Survivor + Killer + Spectator)
+-- v4.2: AC-GUARD — เจอ "ForsakenCheatKiller 003 noclipping". ครอบ 3 ทาง: __namecall Kick +
+--       hookfunction(Kick) direct-call + sniff FireServer/Invoke ตอน noclip (จับ remote ฟ้อง server)
 -- v4.1: + KICK-GUARD — hook __namecall บล็อก LP:Kick() จาก client AC + log ต้นตอ
---       (โดนเตะตอน noclip → ดู console ถ้าขึ้น "BLOCKED Kick"=client-side ชนะ / เงียบ=server disconnect)
 -- v4.0: + Noclip [N] STEALTH — CanCollide=false ทะลุกำแพง + spoof Climbing ทุก frame + cap speed 16
 --       (เดินทะลุด้วย WalkSpeed ปกติ ไม่ warp → ดู legit | ปิด=คืน CanCollide ทันที)
 -- v3.9: Climb STEALTH — spoof Humanoid→Climbing state ทุก frame (server เห็นเป็นปีนบันได legit)
@@ -106,34 +107,57 @@ local Highlights = _G.FRSN_HL
 local GenHL      = _G.FRSN_GEN_HL
 local ItemHL     = _G.FRSN_ITEM_HL
 
--- ==================== KICK-GUARD (บล็อก client-side anti-cheat kick) ====================
--- โดนเตะตอน Noclip/Climb = client AC (Systems.Character) เรียก LP:Kick()
--- → ดัก __namecall เมธอด "Kick" บนตัวเรา → บล็อก + log ว่าใครเรียก (เห็นต้นตอใน console)
--- hook ครั้งเดียว (flag กัน re-run stack) | executor ไม่มี hookmetamethod = ข้ามเงียบ
+-- ==================== AC-GUARD (กัน ForsakenCheatKiller noclip detect) ====================
+-- เคส: "ForsakenCheatKiller 003: Client assumed to be noclipping" (err 267)
+-- kick-guard __namecall เดิมไม่ทัน = ตัวเตะไม่ได้ผ่าน __namecall → ครอบ 3 ทาง:
+--   (1) __namecall "Kick"           → บล็อก (เผื่อ client เรียกตรง)
+--   (2) hookfunction(LP.Kick)       → บล็อก direct-call (`local k=LP.Kick; k(LP,..)`)
+--   (3) __namecall FireServer/Invoke→ ตอน sniff (noclip on) log remote+args ว่าใครฟ้อง server
+-- ดู console: เห็น "BLOCKED Kick"=client / เห็น remote ยิงก่อนเตะ=ฟ้อง server (เอามาบล็อก)
+_G.FRSN_LP = LP
+local function _argstr(...)
+    local n = select("#", ...); local t = {}
+    for i = 1, math.min(n, 4) do t[i] = tostring((select(i, ...))) end
+    return table.concat(t, ", ") .. (n > 4 and (" …(+" .. (n-4) .. ")") or "")
+end
 if not _G.FRSN_KICKGUARD then
     _G.FRSN_KICKGUARD = true
-    local installed = pcall(function()
-        local hookmeta = rawget(getfenv(), "hookmetamethod") or hookmetamethod
-        local getnc    = rawget(getfenv(), "getnamecallmethod") or getnamecallmethod
+    local env = getfenv()
+    local hookmeta = rawget(env, "hookmetamethod") or rawget(_G, "hookmetamethod")
+    local getnc    = rawget(env, "getnamecallmethod") or rawget(_G, "getnamecallmethod")
+    local hookfn   = rawget(env, "hookfunction") or rawget(env, "replaceclosure")
+    -- (1)+(3) __namecall
+    pcall(function()
         if not (hookmeta and getnc) then error("no hookmetamethod") end
         local oldNC
         oldNC = hookmeta(game, "__namecall", function(self, ...)
             local m = getnc()
             if (m == "Kick" or m == "kick") and self == _G.FRSN_LP then
-                local tb = ""
-                pcall(function() tb = debug.traceback() end)
-                warn("[FRSN] 🛡️ BLOCKED Kick! ต้นตอ:\n" .. tb)
-                return nil   -- กลืน → ไม่เตะ
+                warn("[FRSN] 🛡️ BLOCKED Kick (namecall)! ต้นตอ:\n" .. debug.traceback())
+                return nil
+            end
+            if _G.FRSN_SNIFF and (m == "FireServer" or m == "InvokeServer"
+                                  or m == "fireServer" or m == "invokeServer") then
+                local nm = "?"; pcall(function() nm = self:GetFullName() end)
+                warn("[FRSN] 📡 " .. m .. " → " .. nm .. " | args: " .. _argstr(...))
             end
             return oldNC(self, ...)
         end)
-        print("[FRSN] kick-guard ทำงาน (hookmetamethod __namecall)")
+        print("[FRSN] AC-guard: __namecall hook ทำงาน")
     end)
-    if not installed then
-        warn("[FRSN] kick-guard ติดตั้งไม่ได้ — executor ไม่ support hookmetamethod")
-    end
+    -- (2) direct-call Kick
+    pcall(function()
+        if not hookfn then return end
+        local realKick; realKick = hookfn(_G.FRSN_LP.Kick, function(self, ...)
+            if self == _G.FRSN_LP then
+                warn("[FRSN] 🛡️ BLOCKED Kick (direct)! ต้นตอ:\n" .. debug.traceback())
+                return nil
+            end
+            return realKick(self, ...)
+        end)
+        print("[FRSN] AC-guard: hookfunction(Kick) ทำงาน")
+    end)
 end
-_G.FRSN_LP = LP   -- kick-guard closure อ้าง _G.FRSN_LP (อัปเดตได้แม้ re-run โดยไม่ re-hook)
 
 local function bind(sig, fn)
     local c = sig:Connect(fn)
@@ -1003,7 +1027,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v4.1"; titleL.TextScaled = true
+titleL.Text = "Forsaken v4.2"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1208,6 +1232,7 @@ bind(UIS.InputBegan, function(input, gp)
         CLIMB_ON = not CLIMB_ON
     elseif kc == Enum.KeyCode.N then
         NOCLIP_ON = not NOCLIP_ON
+        _G.FRSN_SNIFF = NOCLIP_ON   -- เปิด sniff remote ตอน noclip (จับตัวฟ้อง server)
         if not NOCLIP_ON then restoreCollide() end
     elseif kc == Enum.KeyCode.R then
         rescan(); scanGenerators(); rebuildGenHL(); scanItems(); rebuildItemHL()
@@ -1290,7 +1315,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v4.1] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v4.2] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
