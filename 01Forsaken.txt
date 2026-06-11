@@ -1,4 +1,6 @@
--- 01Forsaken.txt — Forsaken Helper v3.9 (Survivor + Killer + Spectator)
+-- 01Forsaken.txt — Forsaken Helper v4.0 (Survivor + Killer + Spectator)
+-- v4.0: + Noclip [N] STEALTH — CanCollide=false ทะลุกำแพง + spoof Climbing ทุก frame + cap speed 16
+--       (เดินทะลุด้วย WalkSpeed ปกติ ไม่ warp → ดู legit | ปิด=คืน CanCollide ทันที)
 -- v3.9: Climb STEALTH — spoof Humanoid→Climbing state ทุก frame (server เห็นเป็นปีนบันได legit)
 --       + ลด speed 16 (เท่า WalkSpeed) → หลอก heuristic "ลอย+ไม่ตก=บิน" ที่เคยโดนเตะ
 -- v3.8: Climb [C] = ไต่กำแพง + velocity-hold (ไม่ตก) | ตรวจกำแพง 8 ทิศ → ไม่มีกำแพง=ร่วง
@@ -39,7 +41,7 @@
 --   * FIX: Render priority Camera+1 (201) ไม่พอ — เปลี่ยนเป็น Last (2000) บังคับรันท้ายสุด
 --   * เพิ่ม status: "Watch: <name> @ Xm" — เห็นชัดว่า lock ใคร
 -- v1.2 (ไม่พอ):
--- Hotkeys: H=ESP | T=Watch(aim) | G=AutoGen | F=Speed | K=Stalk | R=Rescan
+-- Hotkeys: H=ESP | T=Watch(aim) | G=AutoGen | F=Speed | K=Stalk | C=Climb | N=Noclip | R=Rescan
 -- v1.2:
 --   * FIX: Watch (E) — Forsaken override Camera ใน RenderStep → เปลี่ยนเป็น BindToRenderStep
 --     priority = Camera.Value + 1 (รันหลังเกม) → camera lock อยู่จริง
@@ -116,6 +118,8 @@ local AUTOGEN_ON = false
 local STALK_ON  = false
 local CLIMB_ON    = false
 local CLIMB_SPEED = 16    -- ความเร็วไต่กำแพง — 16 = เท่า WalkSpeed (ดู legit, ไม่โดน flag เร็วไป)
+local NOCLIP_ON   = false  -- [N] ทะลุกำแพง (CanCollide=false + spoof Climbing)
+local noclipParts = {}     -- [BasePart]=originalCanCollide (ไว้คืนค่าตอนปิด)
 
 local SPEED_VAL  = 28    -- max safe 30 (เกินนี้เกม revert)
 local SPEED_MAX  = 30
@@ -734,6 +738,39 @@ bind(RunService.Heartbeat, function()
     end
 end)
 
+-- ==================== NOCLIP loop [N] — ทะลุกำแพง STEALTH ====================
+-- CanCollide=false ทุก frame (ฝั่ง server ไม่เห็นค่านี้ — ปลอดภัยเอง)
+-- สิ่งที่ทำให้รอด: เดินทะลุด้วย WalkSpeed ปกติ (ไม่ warp) + spoof Climbing ทุก frame
+--   → server เห็นเป็น "ปีนบันได" ไม่ใช่ "ลอยทะลุของแข็ง" → ข้าม heuristic ที่เคยเตะ climb
+-- ปิด → คืน CanCollide เดิมให้ทุก part ทันที
+local function setCharCollide(state)
+    if not LPChar then return end
+    for _, p in pairs(LPChar:GetDescendants()) do
+        if p:IsA("BasePart") then
+            if state == false then
+                if noclipParts[p] == nil then noclipParts[p] = p.CanCollide end
+                p.CanCollide = false
+            end
+        end
+    end
+end
+local function restoreCollide()
+    for p, orig in pairs(noclipParts) do
+        if p and p.Parent then pcall(function() p.CanCollide = orig end) end
+    end
+    noclipParts = {}
+end
+
+bind(RunService.Heartbeat, function()
+    if not NOCLIP_ON then return end
+    if not LPChar or not LPHum or LPHum.Health <= 0 then return end
+    setCharCollide(false)
+    -- STEALTH: spoof ปีนบันได ทุก frame → ตำแหน่งทะลุกำแพงดู legit
+    pcall(function() LPHum:ChangeState(Enum.HumanoidStateType.Climbing) end)
+    -- cap speed ให้ ≤ 16 ตอน noclip (ห้ามพุ่ง position-delta = โดน flag)
+    if LPHum.WalkSpeed > 16 then LPHum.WalkSpeed = 16 end
+end)
+
 -- ==================== AUTO-GEN loop (Survivor only) — NO TELEPORT ====================
 -- ห้ามวาป! เกมแบนถ้า server detect CFrame jump
 -- → script ทำแค่ fire prompt อัตโนมัติเมื่อผู้เล่นเดินมาใกล้ ≤ AUTOGEN_DIST
@@ -935,7 +972,7 @@ stk.Color = Color3.fromRGB(180, 30, 100); stk.Thickness = 1
 local titleL = Instance.new("TextLabel")
 titleL.Size = UDim2.new(1, -18, 0, 14); titleL.Position = UDim2.new(0, 2, 0, 1)
 titleL.BackgroundTransparency = 1; titleL.TextColor3 = Color3.fromRGB(255, 130, 200)
-titleL.Text = "Forsaken v3.9"; titleL.TextScaled = true
+titleL.Text = "Forsaken v4.0"; titleL.TextScaled = true
 titleL.Font = Enum.Font.GothamBold; titleL.Parent = f
 
 local roleL = Instance.new("TextLabel")
@@ -1023,7 +1060,7 @@ statL.Font = Enum.Font.Gotham; statL.Parent = f
 local hintL = Instance.new("TextLabel")
 hintL.Size = UDim2.new(1, -4, 0, 28); hintL.Position = UDim2.new(0, 2, 0, 244)
 hintL.BackgroundTransparency = 1; hintL.TextColor3 = Color3.fromRGB(150, 150, 150)
-hintL.Text = "H/T/G/F/K/R | C=Climb(เกาะกำแพงไม่ตก)"; hintL.TextScaled = true
+hintL.Text = "H/T/G/F/K/R | C=Climb | N=Noclip(ทะลุกำแพง)"; hintL.TextScaled = true
 hintL.TextWrapped = true; hintL.Font = Enum.Font.Gotham; hintL.Parent = f
 
 -- Drag
@@ -1138,6 +1175,9 @@ bind(UIS.InputBegan, function(input, gp)
     elseif kc == Enum.KeyCode.K then togK()
     elseif kc == Enum.KeyCode.C then
         CLIMB_ON = not CLIMB_ON
+    elseif kc == Enum.KeyCode.N then
+        NOCLIP_ON = not NOCLIP_ON
+        if not NOCLIP_ON then restoreCollide() end
     elseif kc == Enum.KeyCode.R then
         rescan(); scanGenerators(); rebuildGenHL(); scanItems(); rebuildItemHL()
         rescanBtn.Text = "Done!"
@@ -1162,6 +1202,7 @@ task.spawn(function()
         if AUTOGEN_ON then statL.Text = statL.Text .. " | " .. autogenStatus end
         if STALK_ON then statL.Text = statL.Text .. " | 🥷 " .. stalkStatus end
         if CLIMB_ON  then statL.Text = statL.Text .. " | 🧗Climb" end
+        if NOCLIP_ON then statL.Text = statL.Text .. " | 👻Noclip" end
         if MY_ROLE == "killer" then
             roleL.Text = "Role: 🔪 KILLER"
             roleL.TextColor3 = Color3.fromRGB(255, 100, 100)
@@ -1218,7 +1259,7 @@ task.spawn(function()
     end
 end)
 
-print("[Forsaken v3.9] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
+print("[Forsaken v4.0] loaded | Role:", IS_KILLER and "Killer" or "Survivor",
     "| Gens:", #cachedGens, "| Items:", #cachedItems)
 
 -- ==================== ROLE DEBUG ====================
